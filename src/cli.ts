@@ -17,6 +17,7 @@
 
 import { EvoHub } from './hub.js';
 import { DEFAULT_CONFIG } from './constants.js';
+import { startServer } from './server.js';
 import { improvementLog } from './memory/improvementLog.js';
 import { failureCorpus } from './memory/failureCorpus.js';
 import chalk from 'chalk';
@@ -141,10 +142,14 @@ async function startRepl(): Promise<void> {
   let hubReady = false;
   let hubInitError: string | null = null;
 
+  let server: ReturnType<typeof startServer> | null = null;
+
   const initHub = async () => {
     if (hubReady) return;
     try {
       await hub.start();
+      // Start the dashboard API server alongside the hub
+      server = startServer(hub);
       hubReady = true;
     } catch (err) {
       hubInitError = String(err);
@@ -289,6 +294,8 @@ async function startRepl(): Promise<void> {
     // ── restart ───────────────────────────────────────────────────────────────
     else if (cmd === 'restart') {
       console.log(chalk.cyan('  Restarting hub…'));
+      server?.close();
+      server = null;
       hub.stop();
       hubReady = false;
       hubInitError = null;
@@ -303,6 +310,7 @@ async function startRepl(): Promise<void> {
     // ── quit ──────────────────────────────────────────────────────────────────
     else if (cmd === 'quit' || cmd === 'exit') {
       console.log(chalk.gray('  Goodbye!'));
+      server?.close();
       hub.stop();
       rl.close();
       return;
