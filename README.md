@@ -8,7 +8,7 @@
 
 **OpenClaw Evo** is a self-evolution engine for [OpenClaw](https://github.com/DevvGwardo/openclaw). It watches how your AI assistant performs, identifies recurring failures, automatically generates fixes (skills), A/B tests them with statistical rigor, and deploys the winners — continuously, without human intervention.
 
-Inspired by recursive self-improvement (MiniMax M2.7), it creates a closed feedback loop where the AI assistant gets better at its job over time.
+It also acts as a **supervisor** — if the OpenClaw gateway goes down, the built-in watchdog detects it and restarts it automatically.
 
 ## Quick Start
 
@@ -74,6 +74,7 @@ flowchart LR
 
         subgraph Core["Core Engine"]
             HUB["EvoHub"]
+            WD["Watchdog"]
 
             subgraph Harness["Harness"]
                 MON["Monitor"]
@@ -116,6 +117,7 @@ flowchart LR
     end
 
     MON <-->|"HTTP poll"| GW
+    WD -.->|"health check\n+ auto-restart"| GW
     RN -->|"spawn sessions"| GW
     PR -->|"deploy"| Skills
     MS <-->|"read/write"| Disk
@@ -129,6 +131,47 @@ flowchart LR
     style Mem fill:#181824,stroke:#a070f0,color:#e0e0e0
     style External fill:#1a1a2e,stroke:#444,color:#e0e0e0
 ```
+
+## Gateway Watchdog
+
+The built-in watchdog monitors the OpenClaw gateway and restarts it automatically when it goes down.
+
+```mermaid
+flowchart TD
+    A["Health check every 15s"] --> B{"Gateway\nresponding?"}
+    B -->|"Yes"| C["Reset failure counter"]
+    B -->|"No"| D["Increment failures"]
+    D --> E{"3 consecutive\nfailures?"}
+    E -->|"No"| A
+    E -->|"Yes"| F["Run: openclaw gateway start"]
+    F --> G["Wait 5s, verify"]
+    G --> H{"Gateway back?"}
+    H -->|"Yes"| C
+    H -->|"No"| I["60s cooldown"]
+    I --> A
+    C --> A
+
+    style B fill:#2a2a3e,stroke:#f0c040,color:#e0e0e0
+    style E fill:#2a2a3e,stroke:#f0c040,color:#e0e0e0
+    style H fill:#2a2a3e,stroke:#f0c040,color:#e0e0e0
+    style F fill:#1a2a3a,stroke:#00e5c8,color:#e0e0e0
+    style I fill:#3a2a1a,stroke:#e06040,color:#e0e0e0
+```
+
+- Polls gateway health every 15 seconds
+- Restarts after 3 consecutive failures via `openclaw gateway start`
+- 60-second cooldown between restart attempts
+- Gives up after 10 restarts (requires manual intervention)
+- Check status with the `watchdog` REPL command
+
+| Setting | Default | Env var |
+|---------|---------|---------|
+| Check interval | 15s | `WATCHDOG_CHECK_INTERVAL_MS` |
+| Failure threshold | 3 | `WATCHDOG_FAILURE_THRESHOLD` |
+| Restart cooldown | 60s | `WATCHDOG_RESTART_COOLDOWN_MS` |
+| Max restarts | 10 | `WATCHDOG_MAX_RESTARTS` |
+| Restart command | `openclaw gateway start` | `WATCHDOG_RESTART_CMD` / `WATCHDOG_RESTART_ARGS` |
+| Enable/disable | on | `WATCHDOG_ENABLED` |
 
 ## Data Flow: Failure to Fix
 
@@ -218,6 +261,7 @@ OpenClaw Evo > help
   approve <id>   Approve a proposed skill by id
   logs           Show recent evolution cycle logs
   stats          Show performance statistics
+  watchdog       Show gateway watchdog status
   restart        Stop and restart the hub
   quit           Exit the REPL
 ```
@@ -248,6 +292,7 @@ openclaw-evo/
 │   ├── hub.ts                  # EvoHub — main orchestrator
 │   ├── cli.ts                  # Interactive REPL entry point
 │   ├── server.ts               # HTTP API server (port 5174)
+│   ├── watchdog.ts             # Gateway health monitor + auto-restart
 │   ├── types.ts                # Shared TypeScript interfaces
 │   ├── constants.ts            # Default configuration
 │   ├── harness/
@@ -312,7 +357,7 @@ The web dashboard at `http://localhost:5174` shows real-time evolution status:
 ## Prerequisites
 
 - Node.js 20+
-- OpenClaw gateway running (`openclaw gateway start`)
+- OpenClaw gateway running (`openclaw gateway start`) — or let the watchdog start it for you
 
 ## Contributing
 
