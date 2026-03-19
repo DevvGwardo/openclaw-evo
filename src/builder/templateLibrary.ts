@@ -2237,9 +2237,14 @@ export const templateLibrary = new TemplateLibrary();
 export const TEMPLATE_LIBRARY: Record<string, SkillTemplate> =
   Object.fromEntries(TEMPLATES.map(t => [t.name, t]));
 
-// getTemplate(name) → template or undefined
+// getTemplate(name) → template or undefined (case-insensitive, underscore-tolerant
+// to handle snake_case IDs from selectTemplateType vs Title Case library keys)
 export function getTemplate(name: string): SkillTemplate | undefined {
-  return TEMPLATE_LIBRARY[name];
+  const normalized = name.toLowerCase().replace(/_/g, ' ');
+  const key = Object.keys(TEMPLATE_LIBRARY).find(
+    (k) => k.toLowerCase() === normalized,
+  );
+  return key !== undefined ? TEMPLATE_LIBRARY[key] : undefined;
 }
 
 // getTemplateTypes() → all template names
