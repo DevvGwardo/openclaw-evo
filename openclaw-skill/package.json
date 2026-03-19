@@ -1,0 +1,7 @@
+{
+  "name": "evo",
+  "version": "1.0.0",
+  "description": "OpenClaw self-evolution system skill",
+  "main": "evo.ts",
+  "type": "module"
+}
