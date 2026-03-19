@@ -5,6 +5,19 @@
  * Used to list sessions, get history, and invoke tools.
  */
 
+import { readFileSync } from 'fs';
+import { homedir, join } from 'path';
+
+function getGatewayToken(): string {
+  try {
+    const configPath = join(homedir(), '.openclaw', 'openclaw.json');
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return config?.gateway?.auth?.token ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export interface OpenClawSession {
   key: string;
   kind: string;
@@ -39,9 +52,13 @@ export class Gateway {
     const body: Record<string, unknown> = { tool, args };
     if (sessionKey) body.sessionKey = sessionKey;
 
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getGatewayToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
     const res = await fetch(`${this.baseUrl}/tools/invoke`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
 
@@ -59,6 +76,8 @@ export class Gateway {
       args.activeMinutes = activeMinutes;
     }
     const resp = await this.request('sessions_list', args);
+    console.log('[Gateway] sessions_list raw response keys:', Object.keys(resp));
+    console.log('[Gateway] sessions_list result:', JSON.stringify(resp.result ?? 'none').slice(0, 200));
     const details = resp.result as { sessions?: OpenClawSession[] } | undefined;
     return details?.sessions ?? [];
   }
