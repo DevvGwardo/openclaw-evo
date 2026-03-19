@@ -32,6 +32,7 @@ import type {
   Experiment,
   HubStatus,
   EvaluationReport,
+  HubState,
 } from './types.js';
 
 export class EvoHub {
@@ -45,6 +46,9 @@ export class EvoHub {
   private cycleTimer: ReturnType<typeof setTimeout> | null = null;
   private currentCycle: EvolutionCycle | null = null;
   private cycleNumber = 0;
+  private completedCycles: EvolutionCycle[] = [];
+  private cycleHistory: EvolutionCycle[] = [];
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: Partial<EvoConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -63,6 +67,9 @@ export class EvoHub {
     this.log('info', `  Failure threshold: ${this.config.FAILURE_THRESHOLD}`);
     this.log('info', `  Min improvement: ${this.config.MIN_IMPROVEMENT_PCT}%`);
     this.log('info', `  Experiment sessions: ${this.config.EXPERIMENT_SESSIONS}`);
+
+    // Attempt to resume from last checkpoint
+    void this.resume();
   }
 
   private storeMemoryDir(): string {
@@ -108,15 +115,71 @@ export class EvoHub {
     const stats = await improvementLog.getStats();
     this.log('info', `✓ Loaded ${stats.totalImprovements} improvement entries from history`);
 
+    // Start heartbeat logging every minute
+    this.heartbeatInterval = setInterval(() => {
+      if (this.running) {
+        this.log('info', chalk.gray(`💓 Heartbeat | Cycle #${this.cycleNumber} | Active experiments: ${this.activeExperiments.size} | Running: ${this.running}`));
+      }
+    }, 60_000);
+
     this.log('info', chalk.green('✅ OpenClaw Evo Hub running!'));
+
+    // Begin the evolution cycle loop
+    this.scheduleNextCycle(this.config.CYCLE_INTERVAL_MS);
   }
 
   stop(): void {
     if (!this.running) return;
     this.running = false;
     if (this.cycleTimer) clearTimeout(this.cycleTimer);
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     this.monitor.stop();
     this.log('info', '🛑 OpenClaw Evo Hub stopped');
+  }
+
+  // ── Persistence ────────────────────────────────────────────────────────────
+
+  /**
+   * Save current hub state to the memory store as a checkpoint.
+   * Called after each evolution cycle completes.
+   */
+  async checkpoint(): Promise<void> {
+    const state: HubState = {
+      cycleNumber: this.cycleNumber,
+      completedCycles: this.completedCycles.slice(-50),
+      proposedSkills: this.proposedSkills,
+      activeExperiments: Array.from(this.activeExperiments.values()),
+      lastCheckpoint: new Date(),
+    };
+    await this.store.save('hub-state', state);
+  }
+
+  /**
+   * Load hub state from the memory store and restore it.
+   * Sets running=false so start() must be called explicitly.
+   */
+  async resume(): Promise<void> {
+    const state = await this.store.load<HubState>('hub-state');
+    if (!state) {
+      this.log('info', 'No checkpoint found — starting fresh');
+      return;
+    }
+    this.cycleNumber = state.cycleNumber ?? 0;
+    this.proposedSkills = state.proposedSkills ?? [];
+    this.completedCycles = (state.completedCycles ?? []).map((c) => ({
+      ...c,
+      startedAt: new Date(c.startedAt),
+      completedAt: c.completedAt ? new Date(c.completedAt) : undefined,
+    }));
+    this.activeExperiments = new Map(
+      (state.activeExperiments ?? []).map((e) => [e.id, e]),
+    );
+    this.running = false;
+    this.log('info', `✓ Resumed from checkpoint — cycle #${this.cycleNumber}, ${this.completedCycles.length} cycles completed`);
+  }
+
+  getCompletedCycles(): EvolutionCycle[] {
+    return [...this.completedCycles];
   }
 
   // ── Evolution Loop ──────────────────────────────────────────────────────────
@@ -224,7 +287,7 @@ export class EvoHub {
 
         const decision = promoter.evaluate(completed);
         if (decision.promoted) {
-          promoter.promote(completed.id);
+          await promoter.promote(completed.id);
           this.currentCycle.phases.integrate.improvementsDeployed++;
           this.log('info', chalk.greenBright(`  🚀 Promoted: ${skill.name} (+${result.improvementPct.toFixed(1)}%)`));
         } else {
@@ -241,9 +304,18 @@ export class EvoHub {
     this.currentCycle.status = 'completed';
     this.currentCycle.completedAt = new Date();
 
+    // Persist completed cycle
+    this.completedCycles.push(this.currentCycle);
+    if (this.completedCycles.length > 50) {
+      this.completedCycles = this.completedCycles.slice(-50);
+    }
+
     const totalMs = Date.now() - cycleStart;
     this.log('info', chalk.green(`✅ Cycle #${this.cycleNumber} complete in ${(totalMs / 1000).toFixed(1)}s`));
     this.log('info', chalk.gray(`   Built: ${newSkills.length} skills | Experiments: ${experimentsRun} | Deployed: ${this.currentCycle.phases.integrate.improvementsDeployed}`));
+
+    // Save checkpoint after cycle completes
+    await this.checkpoint();
 
     if (this.running) {
       this.scheduleNextCycle(this.config.CYCLE_INTERVAL_MS);

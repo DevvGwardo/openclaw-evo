@@ -202,6 +202,14 @@ export interface SessionLifecycle {
 
 // ── Hub ───────────────────────────────────────────────────────────────────────
 
+export interface HubState {
+  cycleNumber: number;
+  completedCycles: EvolutionCycle[];
+  proposedSkills: GeneratedSkill[];
+  activeExperiments: Experiment[];
+  lastCheckpoint: Date;
+}
+
 export interface EvolutionCycle {
   id: string;
   cycleNumber: number;
