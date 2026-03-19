@@ -4,15 +4,17 @@
  * Handles /evo commands by calling the hub's HTTP API on port 5174.
  *
  * Exported functions:
- *   getEvoStatus()         => formats hub status for chat
- *   getEvoStats()          => formats performance metrics
- *   getEvoCycles()         => formats recent cycles
- *   getEvoSkills()         => formats skills list
- *   getEvoExperiments()    => formats experiment results
- *   triggerEvolutionCycle() => POST to hub
- *   approveSkill(id)       => POST to hub
- *   rejectSkill(id)        => POST to hub
- *   getEvoLogs()           => formats recent log entries
+ *   getEvoStatus()           => formats hub status for chat
+ *   getEvoStats()            => formats performance metrics
+ *   getEvoCycles()           => formats recent cycles
+ *   getEvoSkills()           => formats skills list
+ *   getEvoExperiments()      => formats experiment results
+ *   getEvoConfig()           => formats current hub config
+ *   triggerEvolutionCycle()  => POST to hub
+ *   approveSkill(id)         => POST to hub
+ *   rejectSkill(id)          => POST to hub
+ *   restartHub()             => POST /api/restart
+ *   getEvoLogs()             => formats recent log entries
  *
  * The main handler parses an /evo command string and returns a formatted response.
  */
@@ -38,9 +40,23 @@ const err = (s: string) => red(`✘ ${s}`);
 const info = (s: string) => cyan(`ℹ ${s}`);
 const warn = (s: string) => yellow(`⚠ ${s}`);
 
+const START_HINT = dim("Start with: cd ~/openclaw-evo && npm run start:hub");
+
 // ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
+
+/** Detect connection-level errors so we can show the start hint. */
+function isHubNotRunning(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return (
+    msg.includes("fetch failed") ||
+    msg.includes("ECONNREFUSED") ||
+    msg.includes("ENOTFOUND") ||
+    msg.includes("ETIMEDOUT") ||
+    msg.includes("socket hang up")
+  );
+}
 
 async function apiGet<T = unknown>(path: string): Promise<T> {
   const controller = new AbortController();
@@ -90,7 +106,7 @@ async function apiPost<T = unknown>(path: string, body?: unknown): Promise<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Type definitions (mirror hub schema)
+// Inline type definitions
 // ---------------------------------------------------------------------------
 
 interface HubStatus {
@@ -147,6 +163,40 @@ interface LogEntry {
   context?: Record<string, unknown>;
 }
 
+interface HubConfig {
+  CYCLE_INTERVAL_MS: number;
+  FAILURE_THRESHOLD: number;
+  MAX_SKILLS_PER_CYCLE: number;
+  EXPERIMENT_SESSIONS: number;
+  MIN_IMPROVEMENT_PCT: number;
+  STATISTICAL_CONFIDENCE: number;
+  OPENCLAW_GATEWAY_URL: string;
+  OPENCLAW_POLL_INTERVAL_MS: number;
+  SKILL_OUTPUT_DIR: string;
+  SKILL_TEMPLATE_DIR: string;
+  MEMORY_DIR: string;
+  DASHBOARD_PORT: number;
+}
+
+interface RestartResult {
+  ok: boolean;
+  message?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Hub-not-running scaffold shown when connection fails
+// ---------------------------------------------------------------------------
+
+function hubNotRunningHint(attempt: string): string {
+  return [
+    `${err("Cannot reach Evo hub on port 5174.")}`,
+    `${warn("The hub may not be running.")}`,
+    START_HINT,
+    "",
+    `${dim(`Tried to ${attempt}.`)}`,
+  ].join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // API call wrappers
 // ---------------------------------------------------------------------------
@@ -156,23 +206,25 @@ export async function getEvoStatus(): Promise<string> {
     const status = await apiGet<HubStatus>("/api/status");
     const lines: string[] = [];
 
-    lines.push(bold("┌─ OpenClaw Evo Hub Status"));
-    lines.push(`│  ${dim("running:")} ${status.running ? ok("running") : err("stopped")}`);
-    lines.push(`│  ${dim("total cycles:")} ${white(String(status.totalCycles))}`);
-    lines.push(`│  ${dim("deployed skills:")} ${white(String(status.deployedSkills))}`);
-    lines.push(`│  ${dim("active experiments:")} ${white(String(status.activeExperiments))}`);
-    if (status.version) lines.push(`│  ${dim("version:")} ${cyan(status.version)}`);
+    lines.push(bold("╔" + "═".repeat(54) + "╗"));
+    lines.push(bold("║" + " OpenClaw Evo Hub Status".padEnd(55) + "║"));
+    lines.push(bold("╚" + "═".repeat(54) + "╝"));
+    lines.push(`  ${dim("running:")}            ${status.running ? ok("running") : err("stopped")}`);
+    lines.push(`  ${dim("total cycles:")}      ${white(String(status.totalCycles))}`);
+    lines.push(`  ${dim("deployed skills:")}   ${white(String(status.deployedSkills))}`);
+    lines.push(`  ${dim("active experiments:")} ${white(String(status.activeExperiments))}`);
+    if (status.version) lines.push(`  ${dim("version:")}          ${cyan(status.version)}`);
     if (status.uptime !== undefined) {
       const mins = Math.floor(status.uptime / 60);
       const secs = status.uptime % 60;
-      lines.push(`│  ${dim("uptime:")} ${white(`${mins}m ${secs}s`)}`);
+      lines.push(`  ${dim("uptime:")}           ${white(`${mins}m ${secs}s`)}`);
     }
-    lines.push(bold("└"));
 
     return lines.join("\n");
   } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("fetch hub status");
     const msg = e instanceof Error ? e.message : String(e);
-    return `${err("Failed to reach Evo hub")}\n${dim(`(${msg})`)}\n${dim("Is the hub running on port 5174?")}`;
+    return `${err("Failed to reach Evo hub")}\n${dim(`(${msg})`)}`;
   }
 }
 
@@ -185,38 +237,40 @@ export async function getEvoStats(): Promise<string> {
       stats.overallScore >= 80 ? green : stats.overallScore >= 60 ? yellow : red;
     const scoreBar = makeScoreBar(stats.overallScore);
 
-    lines.push(bold("┌─ Evo Performance Stats"));
+    lines.push(bold("╔" + "═".repeat(54) + "╗"));
+    lines.push(bold("║" + " Evo Performance Stats".padEnd(55) + "║"));
+    lines.push(bold("╚" + "═".repeat(54) + "╝"));
     lines.push(
-      `│  ${dim("overall score:")} ${scoreColor(`${stats.overallScore.toFixed(1)}`)} ${scoreBar}`
+      `  ${dim("overall score:")}    ${scoreColor(`${stats.overallScore.toFixed(1)}`)} ${scoreBar}`
     );
-    lines.push(`│  ${dim("total evaluations:")} ${white(String(stats.totalEvaluations))}`);
-    lines.push("│");
-    lines.push(`│  ${bold("Top Tools by Success Rate")}`);
+    lines.push(`  ${dim("total evaluations:")} ${white(String(stats.totalEvaluations))}`);
+    lines.push("");
+    lines.push(`  ${bold("Top Tools by Success Rate")}`);
 
     if (stats.topTools.length === 0) {
-      lines.push(`${dim("│   (no tool data yet)")}`);
+      lines.push(`  ${dim("(no tool data yet)")}`);
     } else {
       for (const tool of stats.topTools.slice(0, 8)) {
         const rate = tool.successRate;
         const rateColor = rate >= 0.9 ? green : rate >= 0.7 ? yellow : red;
         const bar = makeRateBar(rate);
         lines.push(
-          `│   ${white(tool.name.padEnd(24))} ${rateColor((rate * 100).toFixed(0).padStart(3) + "%")} ${bar} ${dim(`(${tool.calls} calls)`)}`
+          `   ${white(tool.name.padEnd(24))} ${rateColor((rate * 100).toFixed(0).padStart(3) + "%")} ${bar} ${dim(`(${tool.calls} calls)`)}`
         );
       }
     }
 
     if (stats.failurePatterns.length > 0) {
-      lines.push("│");
-      lines.push(`│  ${bold("Failure Patterns")}`);
+      lines.push("");
+      lines.push(`  ${bold("Failure Patterns")}`);
       for (const fp of stats.failurePatterns.slice(0, 6)) {
-        lines.push(`│   ${err("◆")} ${dim(fp.pattern)} ${dim(`(${fp.count})`)}`);
+        lines.push(`   ${err("◆")} ${dim(fp.pattern)} ${dim(`(${fp.count})`)}`);
       }
     }
 
-    lines.push(bold("└"));
     return lines.join("\n");
   } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("fetch performance stats");
     const msg = e instanceof Error ? e.message : String(e);
     return `${err("Failed to load stats")}\n${dim(`(${msg})`)}`;
   }
@@ -227,14 +281,16 @@ export async function getEvoCycles(): Promise<string> {
     const cycles = await apiGet<EvolutionCycle[]>("/api/cycles");
     const lines: string[] = [];
 
-    lines.push(bold("┌─ Recent Evolution Cycles"));
+    lines.push(bold("╔" + "═".repeat(54) + "╗"));
+    lines.push(bold("║" + " Recent Evolution Cycles".padEnd(55) + "║"));
+    lines.push(bold("╚" + "═".repeat(54) + "╝"));
     lines.push(
-      `│  ${dim("ID").padEnd(12)} ${dim("When").padEnd(26)} ${dim("Eval").padEnd(6)} ${dim("Prop").padEnd(6)} ${dim("Dep").padEnd(6)} ${dim("Status")}`
+      `  ${dim("ID").padEnd(12)} ${dim("When").padEnd(26)} ${dim("Eval").padEnd(6)} ${dim("Prop").padEnd(6)} ${dim("Dep").padEnd(6)} ${dim("Status")}`
     );
-    lines.push(dim("│  " + "─".repeat(72)));
+    lines.push(dim("  " + "─".repeat(72)));
 
     if (cycles.length === 0) {
-      lines.push(`${dim("│   (no cycles yet)")}`);
+      lines.push(`  ${dim("(no cycles yet)")}`);
     } else {
       const recent = cycles.slice(-10).reverse();
       for (const c of recent) {
@@ -247,14 +303,14 @@ export async function getEvoCycles(): Promise<string> {
             : red(c.status);
 
         lines.push(
-          `│  ${cyan(c.id.padEnd(12))} ${dim(when.padEnd(26))} ${white(String(c.skillsEvaluated).padEnd(6))} ${white(String(c.skillsProposed).padEnd(6))} ${white(String(c.skillsDeployed).padEnd(6))} ${statusIcon} ${statusLabel}`
+          `  ${cyan(c.id.padEnd(12))} ${dim(when.padEnd(26))} ${white(String(c.skillsEvaluated).padEnd(6))} ${white(String(c.skillsProposed).padEnd(6))} ${white(String(c.skillsDeployed).padEnd(6))} ${statusIcon} ${statusLabel}`
         );
       }
     }
 
-    lines.push(bold("└"));
     return lines.join("\n");
   } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("fetch cycles");
     const msg = e instanceof Error ? e.message : String(e);
     return `${err("Failed to load cycles")}\n${dim(`(${msg})`)}`;
   }
@@ -270,7 +326,9 @@ export async function getEvoSkills(): Promise<string> {
       (groups[s.status] ??= []).push(s);
     }
 
-    lines.push(bold("┌─ Skills"));
+    lines.push(bold("╔" + "═".repeat(54) + "╗"));
+    lines.push(bold("║" + " Evo Skills".padEnd(55) + "║"));
+    lines.push(bold("╚" + "═".repeat(54) + "╝"));
     const order: SkillEntry["status"][] = ["deployed", "approved", "proposed", "rejected", "archived"];
     const statusColor: Record<string, (s: string) => string> = {
       deployed: (s) => green(s),
@@ -284,7 +342,7 @@ export async function getEvoSkills(): Promise<string> {
       const group = groups[status];
       if (!group || group.length === 0) continue;
 
-      lines.push(`│  ${bold(statusColor[status](status.toUpperCase()))} (${group.length})`);
+      lines.push(`  ${bold(statusColor[status](status.toUpperCase()))} (${group.length})`);
 
       for (const skill of group.slice(0, 12)) {
         const confPct = Math.round(skill.confidence * 100);
@@ -292,14 +350,14 @@ export async function getEvoSkills(): Promise<string> {
           confPct >= 80 ? green : confPct >= 60 ? yellow : red;
         const confBar = makeRateBar(skill.confidence);
         lines.push(
-          `│   ${magenta(skill.id.padEnd(14))} ${white(skill.name.padEnd(24))} ${confColor(confPct.toString().padStart(3) + "%")} ${confBar}`
+          `   ${magenta(skill.id.padEnd(14))} ${white(skill.name.padEnd(24))} ${confColor(confPct.toString().padStart(3) + "%")} ${confBar}`
         );
       }
     }
 
-    lines.push(bold("└"));
     return lines.join("\n");
   } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("fetch skills");
     const msg = e instanceof Error ? e.message : String(e);
     return `${err("Failed to load skills")}\n${dim(`(${msg})`)}`;
   }
@@ -310,10 +368,12 @@ export async function getEvoExperiments(): Promise<string> {
     const experiments = await apiGet<Experiment[]>("/api/experiments");
     const lines: string[] = [];
 
-    lines.push(bold("┌─ A/B Experiments"));
+    lines.push(bold("╔" + "═".repeat(54) + "╗"));
+    lines.push(bold("║" + " A/B Experiments".padEnd(55) + "║"));
+    lines.push(bold("╚" + "═".repeat(54) + "╝"));
 
     if (experiments.length === 0) {
-      lines.push(`${dim("│   (no experiments yet)")}`);
+      lines.push(`  ${dim("(no experiments yet)")}`);
     } else {
       for (const exp of experiments.slice(-8).reverse()) {
         const statusColor =
@@ -326,28 +386,72 @@ export async function getEvoExperiments(): Promise<string> {
               : `${statusColor("✗ cancelled")}`;
 
         lines.push(
-          `│  ${cyan(exp.id.padEnd(10))} ${white(exp.name).substring(0, 28).padEnd(28)} ${statusBadge}`
+          `  ${cyan(exp.id.padEnd(10))} ${white(exp.name).substring(0, 28).padEnd(28)} ${statusBadge}`
         );
         lines.push(
-          `│   ${dim("A:")} ${white(exp.variantA)} ${dim("vs")} ${dim("B:")} ${white(exp.variantB)}`
+          `   ${dim("A:")} ${white(exp.variantA)} ${dim("vs")} ${dim("B:")} ${white(exp.variantB)}`
         );
 
         if (exp.winner) {
           const winnerLabel = exp.winner === "A" ? exp.variantA : exp.variantB;
           lines.push(
-            `│   ${green("→ winner:")} ${white(winnerLabel)} ${exp.significance !== undefined ? dim(`p=${exp.significance.toFixed(4)})`) : ""}`
+            `   ${green("→ winner:")} ${white(winnerLabel)} ${exp.significance !== undefined ? dim(`p=${exp.significance.toFixed(4)})`) : ""}`
           );
         }
 
-        lines.push(dim("│   " + "─".repeat(66)));
+        lines.push(dim("  " + "─".repeat(66)));
       }
     }
 
-    lines.push(bold("└"));
     return lines.join("\n");
   } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("fetch experiments");
     const msg = e instanceof Error ? e.message : String(e);
     return `${err("Failed to load experiments")}\n${dim(`(${msg})`)}`;
+  }
+}
+
+export async function getEvoConfig(): Promise<string> {
+  try {
+    const cfg = await apiGet<HubConfig>("/api/config");
+    const lines: string[] = [];
+
+    lines.push(bold("╔" + "═".repeat(54) + "╗"));
+    lines.push(bold("║" + " Evo Hub Configuration".padEnd(55) + "║"));
+    lines.push(bold("╚" + "═".repeat(54) + "╝"));
+
+    const rows: Array<[string, string]> = [
+      ["Cycle interval",       `${(cfg.CYCLE_INTERVAL_MS / 1000).toFixed(0)}s`],
+      ["Failure threshold",    `${cfg.FAILURE_THRESHOLD} failures`],
+      ["Max skills / cycle",   `${cfg.MAX_SKILLS_PER_CYCLE}`],
+      ["Experiment sessions",   `${cfg.EXPERIMENT_SESSIONS}`],
+      ["Min improvement",       `${cfg.MIN_IMPROVEMENT_PCT}%`],
+      ["Statistical confidence", `${(cfg.STATISTICAL_CONFIDENCE * 100).toFixed(0)}%`],
+      ["Poll interval",         `${(cfg.OPENCLAW_POLL_INTERVAL_MS / 1000).toFixed(0)}s`],
+      ["Gateway URL",           cfg.OPENCLAW_GATEWAY_URL || dim("(not set)")],
+      ["Skill output dir",      cfg.SKILL_OUTPUT_DIR || dim("(not set)")],
+      ["Skill template dir",    cfg.SKILL_TEMPLATE_DIR || dim("(not set)")],
+      ["Memory dir",            cfg.MEMORY_DIR || dim("(not set)")],
+      ["Dashboard port",        `${cfg.DASHBOARD_PORT}`],
+    ];
+
+    for (const [k, v] of rows) {
+      lines.push(`  ${dim(k.padEnd(24))} ${white(v)}`);
+    }
+
+    return lines.join("\n");
+  } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("fetch config");
+    const msg = e instanceof Error ? e.message : String(e);
+    // Hub may not expose /api/config yet — show a friendly note
+    if (msg.includes("404")) {
+      return [
+        `${warn("Config endpoint not available on this hub version.")}`,
+        `${dim("The hub may need to be updated to support /api/config.")}`,
+        START_HINT,
+      ].join("\n");
+    }
+    return `${err("Failed to load config")}\n${dim(`(${msg})`)}`;
   }
 }
 
@@ -360,6 +464,7 @@ export async function triggerEvolutionCycle(): Promise<string> {
       `${dim("at:")} ${dim(result.triggeredAt)}`,
     ].join("\n");
   } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("trigger a cycle");
     const msg = e instanceof Error ? e.message : String(e);
     return `${err("Failed to trigger evolution cycle")}\n${dim(`(${msg})`)}`;
   }
@@ -373,6 +478,7 @@ export async function approveSkill(id: string): Promise<string> {
     });
     return ok(`Skill ${magenta(result.skillId)} approved for experimentation`);
   } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("approve a skill");
     const msg = e instanceof Error ? e.message : String(e);
     return `${err(`Failed to approve skill "${id}"`)}\n${dim(`(${msg})`)}`;
   }
@@ -386,8 +492,27 @@ export async function rejectSkill(id: string): Promise<string> {
     });
     return ok(`Skill ${magenta(result.skillId)} rejected`);
   } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("reject a skill");
     const msg = e instanceof Error ? e.message : String(e);
     return `${err(`Failed to reject skill "${id}"`)}\n${dim(`(${msg})`)}`;
+  }
+}
+
+export async function restartHub(): Promise<string> {
+  try {
+    const result = await apiPost<RestartResult>("/api/restart");
+    return ok(`Hub restart initiated — ${result.message ?? "shutting down for a clean restart"}`);
+  } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("restart hub");
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("404")) {
+      return [
+        `${warn("Restart endpoint not available on this hub version.")}`,
+        `${dim("The hub may need to be updated to support /api/restart.")}`,
+        START_HINT,
+      ].join("\n");
+    }
+    return `${err("Failed to restart hub")}\n${dim(`(${msg})`)}`;
   }
 }
 
@@ -396,10 +521,12 @@ export async function getEvoLogs(): Promise<string> {
     const logs = await apiGet<LogEntry[]>("/api/logs");
     const lines: string[] = [];
 
-    lines.push(bold("┌─ Improvement Logs"));
+    lines.push(bold("╔" + "═".repeat(54) + "╗"));
+    lines.push(bold("║" + " Improvement Logs".padEnd(55) + "║"));
+    lines.push(bold("╚" + "═".repeat(54) + "╝"));
 
     if (logs.length === 0) {
-      lines.push(`${dim("│   (no log entries yet)")}`);
+      lines.push(`  ${dim("(no log entries yet)")}`);
     } else {
       const recent = logs.slice(-20).reverse();
       for (const entry of recent) {
@@ -414,13 +541,13 @@ export async function getEvoLogs(): Promise<string> {
               : entry.level === "debug"
                 ? dim("[DBG]")
                 : dim("[INF]");
-        lines.push(`│  ${ts} ${levelTag} ${entry.message}`);
+        lines.push(`  ${ts} ${levelTag} ${entry.message}`);
       }
     }
 
-    lines.push(bold("└"));
     return lines.join("\n");
   } catch (e: unknown) {
+    if (isHubNotRunning(e)) return hubNotRunningHint("fetch logs");
     const msg = e instanceof Error ? e.message : String(e);
     return `${err("Failed to load logs")}\n${dim(`(${msg})`)}`;
   }
@@ -476,6 +603,14 @@ export async function handleEvoCommand(input: string): Promise<string> {
       return rejectSkill(arg);
     }
 
+    case "restart": {
+      return restartHub();
+    }
+
+    case "config": {
+      return getEvoConfig();
+    }
+
     case "logs": {
       return getEvoLogs();
     }
@@ -495,20 +630,24 @@ export async function handleEvoCommand(input: string): Promise<string> {
 
 function formatHelp(): string {
   const lines: string[] = [];
-  lines.push(bold("┌─ OpenClaw Evo Commands"));
-  lines.push("│");
-  lines.push(`│  ${cyan("/evo status")}       ${dim("Hub running state, cycles, skills, experiments")}`);
-  lines.push(`│  ${cyan("/evo stats")}        ${dim("Performance scores, top tools, failure patterns")}`);
-  lines.push(`│  ${cyan("/evo cycles")}       ${dim("Recent evolution cycles with outcomes")}`);
-  lines.push(`│  ${cyan("/evo skills")}       ${dim("Proposed & deployed skills with confidence")}`);
-  lines.push(`│  ${cyan("/evo experiments")}  ${dim("Active and completed A/B experiments")}`);
-  lines.push(`│  ${cyan("/evo trigger")}      ${dim("Manually trigger an evolution cycle")}`);
-  lines.push(`│  ${cyan("/evo approve")}      ${dim("<skill-id>  Approve a proposed skill")}`);
-  lines.push(`│  ${cyan("/evo reject")}       ${dim("<skill-id>  Reject a proposed skill")}`);
-  lines.push(`│  ${cyan("/evo logs")}        ${dim("Recent improvement log entries")}`);
-  lines.push(`│  ${cyan("/evo help")}        ${dim("Show this message")}`);
-  lines.push("│");
-  lines.push(bold("└") + dim("  Hub API: http://localhost:5174"));
+  lines.push(bold("╔" + "═".repeat(54) + "╗"));
+  lines.push(bold("║" + " OpenClaw Evo Commands".padEnd(55) + "║"));
+  lines.push(bold("╠" + "═".repeat(54) + "╣"));
+  lines.push(`║  ${cyan("/evo status")}       ${dim("Hub running state, cycles, skills, experiments").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo stats")}        ${dim("Performance scores, top tools, failure patterns").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo cycles")}       ${dim("Recent evolution cycles with outcomes").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo skills")}       ${dim("Proposed & deployed skills with confidence").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo experiments")}  ${dim("Active and completed A/B experiments").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo config")}        ${dim("Current hub configuration").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo trigger")}      ${dim("Manually trigger an evolution cycle").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo approve")}       ${dim("<skill-id>  Approve a proposed skill").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo reject")}        ${dim("<skill-id>  Reject a proposed skill").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo restart")}       ${dim("Restart the hub (POST /api/restart)").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo logs")}         ${dim("Recent improvement log entries").padEnd(34)}║`);
+  lines.push(`║  ${cyan("/evo help")}         ${dim("Show this message").padEnd(34)}║`);
+  lines.push(bold("╠" + "═".repeat(54) + "╣"));
+  lines.push(`${bold("║")}  ${dim("Hub API: http://localhost:5174").padEnd(51)} ${bold("║")}`);
+  lines.push(`${bold("╚" + "═".repeat(54) + "╝")}`);
   return lines.join("\n");
 }
 
