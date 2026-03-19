@@ -15,11 +15,22 @@
  */
 
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { EvoHub } from './hub.js';
 import { promoter } from './experiment/promoter.js';
 import { DEFAULT_CONFIG } from './constants.js';
 
 const PORT = 5174;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET ?? 'openclaw-evo-webhook-secret';
+const VALID_EVENTS = ['skill_promoted', 'skill_approved', 'experiment_completed', 'cycle_completed'] as const;
+type WebhookEvent = typeof VALID_EVENTS[number];
+
+interface Webhook {
+  id: string;
+  url: string;
+  events: WebhookEvent[];
+  createdAt: string;
+}
 
 // Lazily initialise hub so the server starts even if the gateway
 // isn't reachable yet.
@@ -29,6 +40,45 @@ function getHub(): EvoHub {
     hub = new EvoHub(DEFAULT_CONFIG);
   }
   return hub;
+}
+
+// ── Webhook store ──────────────────────────────────────────────────────────
+const webhooks = new Map<string, Webhook>();
+
+function generateId(): string {
+  return crypto.randomUUID();
+}
+
+function signPayload(payload: string): string {
+  return crypto.createHmac('sha256', WEBHOOK_SECRET).update(payload).digest('hex');
+}
+
+async function callWebhooks(event: WebhookEvent, data: unknown): Promise<void> {
+  const timestamp = new Date().toISOString();
+  const payload = JSON.stringify({ event, timestamp, data });
+  const signature = signPayload(payload);
+
+  const matches = [...webhooks.values()].filter((wh) => wh.events.includes(event));
+
+  await Promise.allSettled(
+    matches.map(async (wh) => {
+      try {
+        await fetch(wh.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Signature': signature,
+            'X-Event': event,
+            'X-Webhook-ID': wh.id,
+          },
+          body: payload,
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch (err) {
+        console.error(`[webhooks] Failed to deliver ${event} to ${wh.url}:`, err);
+      }
+    }),
+  );
 }
 
 // ── Dashboard metrics from the OpenClaw gateway ───────────────────────────
@@ -133,6 +183,54 @@ function route(req: http.IncomingMessage, res: http.ServerResponse): void {
       return;
     }
 
+    // GET /api/webhooks
+    if (method === 'GET' && url === '/api/webhooks') {
+      jsonResponse(res, 200, [...webhooks.values()]);
+      return;
+    }
+
+    // POST /api/webhooks
+    if (method === 'POST' && url === '/api/webhooks') {
+      readBody().then((raw) => {
+        let body: { url?: unknown; events?: unknown };
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          sendError(res, 400, 'Invalid JSON body');
+          return;
+        }
+        if (!body.url || typeof body.url !== 'string') {
+          sendError(res, 400, 'url is required and must be a string');
+          return;
+        }
+        if (!Array.isArray(body.events) || !body.events.every((e) => VALID_EVENTS.includes(e as WebhookEvent))) {
+          sendError(res, 400, `events must be an array of: ${VALID_EVENTS.join(', ')}`);
+          return;
+        }
+        const webhook: Webhook = {
+          id: generateId(),
+          url: body.url,
+          events: body.events as WebhookEvent[],
+          createdAt: new Date().toISOString(),
+        };
+        webhooks.set(webhook.id, webhook);
+        jsonResponse(res, 201, webhook);
+      });
+      return;
+    }
+
+    // DELETE /api/webhooks/:id
+    if (method === 'DELETE' && url.match(/^\/api\/webhooks\/([^/]+)$/)) {
+      const id = url.match(/^\/api\/webhooks\/([^/]+)$/)![1];
+      if (!webhooks.has(id)) {
+        sendError(res, 404, `Webhook not found: ${id}`);
+        return;
+      }
+      webhooks.delete(id);
+      jsonResponse(res, 200, { ok: true, id });
+      return;
+    }
+
     sendError(res, 404, `Route not found: ${url}`);
   } catch (err) {
     sendError(res, 500, err instanceof Error ? err.message : String(err));
@@ -158,4 +256,7 @@ server.listen(PORT, () => {
   console.log('  GET  /api/approvals/pending   → pending approvals');
   console.log('  POST /api/approvals/:id/approve → approve a skill');
   console.log('  POST /api/approvals/:id/reject  → reject a skill');
+  console.log('  GET  /api/webhooks            → list registered webhooks');
+  console.log('  POST /api/webhooks            → register webhook { url, events[] }');
+  console.log('  DELETE /api/webhooks/:id       → remove a webhook');
 });
