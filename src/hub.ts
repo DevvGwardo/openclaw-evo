@@ -182,6 +182,10 @@ export class EvoHub {
     return [...this.completedCycles];
   }
 
+  getCycleHistory(): EvolutionCycle[] {
+    return [...this.cycleHistory];
+  }
+
   // ── Evolution Loop ──────────────────────────────────────────────────────────
 
   scheduleNextCycle(intervalMs: number): void {
@@ -213,7 +217,16 @@ export class EvoHub {
       status: 'running',
     };
 
-    // ── Phase 1: Evaluate ───────────────────────────────────────────────────
+    // ── Phase 1: Monitor ────────────────────────────────────────────────────
+    const monitorStart = Date.now();
+    try {
+      this.currentCycle.phases.monitor.eventsProcessed = this.recentMetrics.length;
+    } catch (err) {
+      this.log('error', `Monitor phase failed: ${err}`);
+    }
+    this.currentCycle.phases.monitor.durationMs = Date.now() - monitorStart;
+
+    // ── Phase 2: Evaluate ───────────────────────────────────────────────────
     const evaluateStart = Date.now();
     let report: EvaluationReport;
 
@@ -229,6 +242,9 @@ export class EvoHub {
       this.log('error', `Evaluation failed: ${err}`);
       this.currentCycle.status = 'failed';
       this.currentCycle.completedAt = new Date();
+      // Save failed cycle to history and continue
+      this.cycleHistory.push({ ...this.currentCycle });
+      if (this.running) this.scheduleNextCycle(this.config.CYCLE_INTERVAL_MS);
       return;
     }
 
@@ -251,7 +267,7 @@ export class EvoHub {
             result.skill.status = 'proposed';
             newSkills.push(result.skill);
             this.proposedSkills.push(result.skill);
-            improvementLog.record({
+            await improvementLog.record({
               timestamp: new Date(),
               type: 'skill_created',
               description: `Proposed skill: ${result.skill.name} for ${pattern.toolName} failures`,
@@ -304,8 +320,9 @@ export class EvoHub {
     this.currentCycle.status = 'completed';
     this.currentCycle.completedAt = new Date();
 
-    // Persist completed cycle
+    // Persist completed cycle to history and checkpoint
     this.completedCycles.push(this.currentCycle);
+    this.cycleHistory.push({ ...this.currentCycle });
     if (this.completedCycles.length > 50) {
       this.completedCycles = this.completedCycles.slice(-50);
     }
