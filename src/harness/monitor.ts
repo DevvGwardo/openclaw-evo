@@ -10,6 +10,7 @@ import type {
   SessionLifecycle,
   ToolCall,
 } from '../types.js';
+import { getHarnessConfig } from './toolAnalyzer.js';
 
 export type HarnessListener = (event: HarnessEvent) => void;
 export type OpenClawEventHook = (data: unknown) => void;
@@ -17,6 +18,7 @@ export type OpenClawEventHook = (data: unknown) => void;
 interface MonitorConfig {
   gatewayUrl: string;
   pollIntervalMs: number;
+  idleThresholdMs: number;
   onEvent?: HarnessListener;
 }
 
@@ -76,9 +78,13 @@ export class HarnessMonitor {
   private readonly eventCounts = new Map<string, number>();
 
   constructor(config: Partial<MonitorConfig> = {}) {
+    // Load persisted harness tuning (falls back to defaults)
+    const saved = getHarnessConfig();
+
     this.config = {
       gatewayUrl: config.gatewayUrl ?? 'http://localhost:18789',
-      pollIntervalMs: config.pollIntervalMs ?? 10_000,
+      pollIntervalMs: config.pollIntervalMs ?? saved.pollIntervalMs,
+      idleThresholdMs: saved.idleThresholdMs,
       onEvent: config.onEvent,
     };
 

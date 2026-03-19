@@ -7,22 +7,157 @@
  * Takes SessionMetrics[] and returns a PerformanceScore.
  */
 
-import type { SessionMetrics, PerformanceScore } from '../types.js';
+import type { SessionMetrics, PerformanceScore, FailurePattern } from '../types.js';
+import { store } from '../memory/store.js';
+import { WEIGHT_CONFIG_KEY, DEFAULT_WEIGHTS } from '../constants.js';
 
 // ── Defaults & tuning ────────────────────────────────────────────────────────
 
 const DEFAULT_BASELINE_TIME_MS = 60_000; // 1 minute baseline per session
 const DEFAULT_OPTIMAL_CALLS = 3;         // optimal tool calls per session
 
-const WEIGHTS = {
-  accuracy:   0.25,
-  efficiency: 0.20,
-  speed:      0.20,
-  reliability:0.25,
-  coverage:   0.10,
-} as const;
+const WEIGHT_MIN = 0.05;
+const WEIGHT_MAX = 0.40;
 
 const LOG_PREFIX = '[scorer]';
+
+// ── Adaptive weights ─────────────────────────────────────────────────────────
+
+export interface AdaptiveWeights {
+  accuracy: number;
+  efficiency: number;
+  speed: number;
+  reliability: number;
+  coverage: number;
+}
+
+/** Read weights from the memory store, falling back to defaults. */
+export async function getWeights(): Promise<AdaptiveWeights> {
+  const saved = await store.load<AdaptiveWeights>(WEIGHT_CONFIG_KEY);
+  if (saved) return saved;
+  return { ...DEFAULT_WEIGHTS };
+}
+
+/** Persist the given weights to the memory store. */
+export async function saveWeights(weights: AdaptiveWeights): Promise<void> {
+  await store.save(WEIGHT_CONFIG_KEY, weights);
+}
+
+/**
+ * Tune weights based on observed failure patterns and historical results.
+ *
+ * Rules:
+ *   - Reliability errors in >20% of sessions  → increase reliability, decrease speed
+ *   - Coverage gaps (coverage < 60)          → increase coverage
+ *   - Consistently low efficiency (<50)       → increase efficiency
+ * All weights stay bounded in [WEIGHT_MIN, WEIGHT_MAX] then are renormalised to sum=1.
+ */
+export function tuneWeights(
+  historicalResults: SessionMetrics[],
+  patterns: FailurePattern[],
+): AdaptiveWeights {
+  const weights: AdaptiveWeights = { ...DEFAULT_WEIGHTS };
+
+  if (historicalResults.length === 0) return weights;
+
+  // ── Reliability error rate ────────────────────────────────────────────────
+  const sessionsWithErrors = historicalResults.filter((s) => s.errorCount > 0).length;
+  const errorRate = sessionsWithErrors / historicalResults.length;
+  if (errorRate > 0.20) {
+    weights.reliability = Math.min(WEIGHT_MAX, weights.reliability + 0.05);
+    weights.speed       = Math.max(WEIGHT_MIN, weights.speed - 0.05);
+  }
+
+  // ── Coverage gaps ─────────────────────────────────────────────────────────
+  const coverage = calcCoverage(historicalResults);
+  if (coverage < 60) {
+    weights.coverage = Math.min(WEIGHT_MAX, weights.coverage + 0.05);
+  }
+
+  // ── Low efficiency ────────────────────────────────────────────────────────
+  const efficiency = calcEfficiency(historicalResults, DEFAULT_OPTIMAL_CALLS);
+  if (efficiency < 50) {
+    weights.efficiency = Math.min(WEIGHT_MAX, weights.efficiency + 0.05);
+  }
+
+  // ── Renormalise so weights sum to 1 ──────────────────────────────────────
+  const total = weights.accuracy + weights.efficiency + weights.speed +
+                 weights.reliability + weights.coverage;
+  if (total === 0) return { ...DEFAULT_WEIGHTS };
+  const factor = 1 / total;
+  const tuned: AdaptiveWeights = {
+    accuracy:    clamp(weights.accuracy    * factor, WEIGHT_MIN, WEIGHT_MAX),
+    efficiency:  clamp(weights.efficiency  * factor, WEIGHT_MIN, WEIGHT_MAX),
+    speed:       clamp(weights.speed        * factor, WEIGHT_MIN, WEIGHT_MAX),
+    reliability: clamp(weights.reliability * factor, WEIGHT_MIN, WEIGHT_MAX),
+    coverage:    clamp(weights.coverage    * factor, WEIGHT_MIN, WEIGHT_MAX),
+  };
+
+  // Final renormalise pass to guarantee sum===1 after clamping
+  const finalTotal = tuned.accuracy + tuned.efficiency + tuned.speed +
+                     tuned.reliability + tuned.coverage;
+  if (finalTotal === 0) return { ...DEFAULT_WEIGHTS };
+  const finalFactor = 1 / finalTotal;
+  return {
+    accuracy:    tuned.accuracy    * finalFactor,
+    efficiency:  tuned.efficiency  * finalFactor,
+    speed:       tuned.speed        * finalFactor,
+    reliability: tuned.reliability * finalFactor,
+    coverage:    tuned.coverage     * finalFactor,
+  };
+}
+
+/**
+ * Score sessions using tuned (adaptive) weights stored in the memory system.
+ * Loads weights from the store, tunes them with the supplied data, saves the result,
+ * then scores using the new weights.
+ */
+export async function adaptiveScoreSessions(
+  sessions: SessionMetrics[],
+  patterns: FailurePattern[] = [],
+  baselineTimeMs = DEFAULT_BASELINE_TIME_MS,
+  optimalCalls = DEFAULT_OPTIMAL_CALLS,
+): Promise<PerformanceScore> {
+  const currentWeights = await getWeights();
+  const tunedWeights = tuneWeights(sessions, patterns);
+  await saveWeights(tunedWeights);
+
+  return scoreSessionsWithWeights(sessions, tunedWeights, baselineTimeMs, optimalCalls);
+}
+
+// ── Score with explicit weights (used by both scoreSessions and adaptiveScoreSessions) ──
+
+function scoreSessionsWithWeights(
+  sessions: SessionMetrics[],
+  weights: AdaptiveWeights,
+  baselineTimeMs: number,
+  optimalCalls: number,
+): PerformanceScore {
+  const accuracy    = calcAccuracy(sessions);
+  const efficiency  = calcEfficiency(sessions, optimalCalls);
+  const speed       = calcSpeed(sessions, baselineTimeMs);
+  const reliability = calcReliability(sessions);
+  const coverage    = calcCoverage(sessions);
+
+  const overall = weightedOverall(accuracy, efficiency, speed, reliability, coverage, weights);
+
+  const score: PerformanceScore = {
+    accuracy,
+    efficiency,
+    speed,
+    reliability,
+    coverage,
+    overall,
+  };
+
+  console.log(
+    `${LOG_PREFIX} Adaptive scored ${sessions.length} sessions — overall: ${overall.toFixed(1)} ` +
+    `(acc=${accuracy.toFixed(1)} eff=${efficiency.toFixed(1)} spd=${speed.toFixed(1)} ` +
+    `rel=${reliability.toFixed(1)} cov=${coverage.toFixed(1)})`,
+  );
+
+  return score;
+}
 
 /**
  * Compute performance scores from a batch of session metrics.
@@ -40,31 +175,7 @@ export function scoreSessions(
     console.warn(`${LOG_PREFIX} No sessions provided — returning zero scores`);
     return zeroScore();
   }
-
-  const accuracy   = calcAccuracy(sessions);
-  const efficiency = calcEfficiency(sessions, optimalCalls);
-  const speed      = calcSpeed(sessions, baselineTimeMs);
-  const reliability= calcReliability(sessions);
-  const coverage   = calcCoverage(sessions);
-
-  const overall = weightedOverall(accuracy, efficiency, speed, reliability, coverage);
-
-  const score: PerformanceScore = {
-    accuracy,
-    efficiency,
-    speed,
-    reliability,
-    coverage,
-    overall,
-  };
-
-  console.log(
-    `${LOG_PREFIX} Scored ${sessions.length} sessions — overall: ${overall.toFixed(1)} ` +
-    `(acc=${accuracy.toFixed(1)} eff=${efficiency.toFixed(1)} spd=${speed.toFixed(1)} ` +
-    `rel=${reliability.toFixed(1)} cov=${coverage.toFixed(1)})`,
-  );
-
-  return score;
+  return scoreSessionsWithWeights(sessions, { ...DEFAULT_WEIGHTS }, baselineTimeMs, optimalCalls);
 }
 
 // ── Dimension calculators ─────────────────────────────────────────────────────
@@ -154,18 +265,23 @@ export function weightedOverall(
   speed: number,
   reliability: number,
   coverage: number,
+  weights: AdaptiveWeights = { ...DEFAULT_WEIGHTS },
 ): number {
   return cap100(
-    WEIGHTS.accuracy    * accuracy    +
-    WEIGHTS.efficiency  * efficiency  +
-    WEIGHTS.speed       * speed       +
-    WEIGHTS.reliability * reliability +
-    WEIGHTS.coverage    * coverage,
+    weights.accuracy    * accuracy    +
+    weights.efficiency  * efficiency  +
+    weights.speed       * speed       +
+    weights.reliability * reliability +
+    weights.coverage    * coverage,
   );
 }
 
 function cap100(v: number): number {
   return Math.min(100, Math.max(0, v));
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
 }
 
 function zeroScore(): PerformanceScore {

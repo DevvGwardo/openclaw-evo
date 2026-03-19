@@ -4,7 +4,9 @@
  * and surfaces trends for the evaluator and tool builder.
  */
 
-import type { ToolLifecycle, FailurePattern, FailureContext } from '../types.js';
+import type { ToolLifecycle, FailurePattern, FailureContext, SessionMetrics } from '../types.js';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 interface ToolStats {
   toolName: string;
@@ -424,4 +426,175 @@ export interface ToolComparison {
     errorRatePct: number;
   };
   improved: boolean;
+}
+
+// ── Self-Improving Harness ──────────────────────────────────────────────────
+
+/**
+ * Insight produced by analyzeAndRecommend().
+ * Describes recommended monitoring parameter adjustments and learned patterns.
+ */
+export interface HarnessInsight {
+  recommendedPollIntervalMs: number;
+  recommendedIdleThresholdMs: number;
+  /** Tools that generate high-value monitoring events (worth watching closely) */
+  highValueToolPatterns: string[];
+  /** Event types that have been flagged as low-value (candidates for filtering) */
+  lowValueEvents: string[];
+}
+
+/**
+ * Persisted harness tuning configuration.
+ */
+export interface HarnessConfig {
+  pollIntervalMs: number;
+  idleThresholdMs: number;
+  highValueToolPatterns: string[];
+  lowValueEvents: string[];
+  version: number;
+}
+
+const DEFAULT_HARNESS_CONFIG: HarnessConfig = {
+  pollIntervalMs: 10_000,
+  idleThresholdMs: 30_000,
+  highValueToolPatterns: [],
+  lowValueEvents: [],
+  version: 1,
+};
+
+const HARNESS_CONFIG_FILE = join(import.meta.dirname, 'harness-config.json');
+
+/** Load persisted harness config, returning defaults if no file exists. */
+export function getHarnessConfig(): HarnessConfig {
+  try {
+    if (existsSync(HARNESS_CONFIG_FILE)) {
+      const raw = readFileSync(HARNESS_CONFIG_FILE, 'utf-8');
+      const parsed = JSON.parse(raw) as Partial<HarnessConfig>;
+      return { ...DEFAULT_HARNESS_CONFIG, ...parsed };
+    }
+  } catch (err) {
+    console.warn('[ToolAnalyzer] Failed to load harness config:', err);
+  }
+  return { ...DEFAULT_HARNESS_CONFIG };
+}
+
+/** Persist a harness config to disk. */
+export function saveHarnessConfig(config: HarnessConfig): void {
+  try {
+    writeFileSync(HARNESS_CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+    console.log('[ToolAnalyzer] Harness config saved:', config);
+  } catch (err) {
+    console.error('[ToolAnalyzer] Failed to save harness config:', err);
+  }
+}
+
+/**
+ * Analyze historical session metrics and produce monitoring parameter recommendations.
+ *
+ * Heuristics:
+ * - Latency std dev > 50% of mean  →  suggest faster poll interval
+ * - Many events from same tool       →  add to highValueToolPatterns
+ * - Event gaps > 5 s                 →  suggest increasing idle threshold
+ * - Very low event rate             →  suggest reducing poll interval (save resources)
+ */
+export function analyzeAndRecommend(historicalMetrics: SessionMetrics[]): HarnessInsight {
+  const insight: HarnessInsight = {
+    recommendedPollIntervalMs: DEFAULT_HARNESS_CONFIG.pollIntervalMs,
+    recommendedIdleThresholdMs: DEFAULT_HARNESS_CONFIG.idleThresholdMs,
+    highValueToolPatterns: [],
+    lowValueEvents: [],
+  };
+
+  if (historicalMetrics.length === 0) {
+    return insight;
+  }
+
+  // ── Latency variability → poll interval ────────────────────────────────────
+  const allLatencies: number[] = [];
+  for (const session of historicalMetrics) {
+    for (const tc of session.toolCalls) {
+      if (tc.endTime) {
+        allLatencies.push(tc.endTime - tc.startTime);
+      }
+    }
+  }
+
+  if (allLatencies.length >= 2) {
+    const mean = allLatencies.reduce((a, b) => a + b, 0) / allLatencies.length;
+    const variance =
+      allLatencies.reduce((sum, v) => sum + (v - mean) ** 2, 0) / allLatencies.length;
+    const stdDev = Math.sqrt(variance);
+
+    if (mean > 0 && stdDev / mean > 0.5) {
+      // Latency is highly variable — suggest faster polling to catch events sooner
+      insight.recommendedPollIntervalMs = Math.max(
+        2_000,
+        Math.round(DEFAULT_HARNESS_CONFIG.pollIntervalMs / 2)
+      );
+    } else if (allLatencies.length > 20 && stdDev / mean < 0.1) {
+      // Very stable latencies and high volume — safe to poll less aggressively
+      insight.recommendedPollIntervalMs = Math.min(
+        30_000,
+        Math.round(DEFAULT_HARNESS_CONFIG.pollIntervalMs * 1.5)
+      );
+    }
+  }
+
+  // ── Event arrival gaps → idle threshold ───────────────────────────────────
+  const sortedSessions = [...historicalMetrics].sort((a, b) => a.startTime - b.startTime);
+  let maxGapMs = 0;
+  for (let i = 1; i < sortedSessions.length; i++) {
+    const gap = sortedSessions[i].startTime - (sortedSessions[i - 1].endTime ?? sortedSessions[i - 1].startTime);
+    if (gap > maxGapMs) maxGapMs = gap;
+  }
+
+  if (maxGapMs > 5_000) {
+    // Events arrive with >5s gaps — increase idle threshold to avoid false stall detection
+    insight.recommendedIdleThresholdMs = Math.max(
+      60_000,
+      Math.round(maxGapMs * 3)
+    );
+  }
+
+  // ── Event rate → poll frequency ────────────────────────────────────────────
+  const totalEvents = historicalMetrics.reduce((sum, s) => sum + s.totalToolCalls, 0);
+  const timeSpan =
+    sortedSessions.length > 1
+      ? sortedSessions[sortedSessions.length - 1].startTime - sortedSessions[0].startTime
+      : 0;
+
+  if (timeSpan > 0 && totalEvents / (timeSpan / 1000) < 0.05) {
+    // Fewer than 0.05 events per second — suggest reducing poll frequency
+    insight.recommendedPollIntervalMs = Math.min(
+      60_000,
+      Math.round(DEFAULT_HARNESS_CONFIG.pollIntervalMs * 3)
+    );
+  }
+
+  // ── High-value tool patterns (tools with many calls) ───────────────────────
+  const toolCallCounts = new Map<string, number>();
+  for (const session of historicalMetrics) {
+    for (const tc of session.toolCalls) {
+      toolCallCounts.set(tc.name, (toolCallCounts.get(tc.name) ?? 0) + 1);
+    }
+  }
+
+  const threshold = Math.max(5, Math.floor(totalEvents * 0.1));
+  for (const [toolName, count] of toolCallCounts) {
+    if (count >= threshold) {
+      insight.highValueToolPatterns.push(toolName);
+    }
+  }
+
+  // ── Low-value event sources (tools that rarely contribute to failures) ─────
+  const lowValueTools: string[] = [];
+  for (const [toolName, count] of toolCallCounts) {
+    // Tool with very few calls relative to the dominant tools, and no failures
+    if (count <= 2 && insight.highValueToolPatterns.length > 3) {
+      lowValueTools.push(toolName);
+    }
+  }
+  insight.lowValueEvents = [...new Set(lowValueTools)];
+
+  return insight;
 }
