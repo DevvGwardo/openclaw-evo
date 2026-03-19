@@ -211,16 +211,16 @@ export function selectTemplateType(failure: FailurePattern): string {
     [/http|request|fetch|api|rest|graphql|url|connection/i, 'api_call'],
 
     // Search
-    [/search|google|look up|web search/i, 'web_search'],
+    [/search|google|look up|web search/i, 'web_research'],
 
     // Data formats
     [/json|parse|csv|xml|transform|encode|decode/i, 'data_processing'],
 
     // Code analysis
-    [/code|review|lint|static|audit/i, 'code_review'],
+    [/code|review|lint|static|audit/i, 'code_debug'],
 
     // Debugging / errors
-    [/error|exception|debug|trace|stack|fail|diagnos/i, 'debugging'],
+    [/error|exception|debug|trace|stack|fail|diagnos/i, 'code_debug'],
   ];
 
   for (const [keyword, template] of keywordMap) {
@@ -239,10 +239,10 @@ export function selectTemplateType(failure: FailurePattern): string {
   if (toolNameLower.includes('http') || toolNameLower.includes('request') || toolNameLower.includes('fetch')) {
     return 'api_call';
   }
-  if (toolNameLower.includes('search')) return 'web_search';
+  if (toolNameLower.includes('search')) return 'web_research';
 
   // Default fallback — Code Debug is the most generic and covers unknown patterns
-  return 'Code Debug';
+  return 'code_debug';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
