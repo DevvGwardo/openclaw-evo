@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 
 import type { Experiment, GeneratedSkill, PromotionDecision } from '../types.js';
 import { comparator } from './comparator.js';
+import { SkillManager } from '../openclaw/skillManager.js';
+import { improvementLog } from '../memory/improvementLog.js';
 
 const SKILLS_DIR = process.env.SKILL_OUTPUT_DIR ?? join(process.env.HOME ?? '~', '.openclaw', 'skills');
 
@@ -32,6 +34,10 @@ const log = {
 const MIN_IMPROVEMENT_PCT = parseFloat(process.env.MIN_IMPROVEMENT_PCT ?? '5');
 const DEFAULT_CONFIDENCE = parseFloat(process.env.STATISTICAL_CONFIDENCE ?? '0.95');
 const PROMOTION_LOG = join(SKILLS_DIR, '.promotion-log.jsonl');
+
+// ── Skill Manager (for auto-deployment) ───────────────────────────────────────
+
+const skillManager = new SkillManager();
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -135,7 +141,11 @@ export const promoter = {
 
   /**
    * Promote the treatment skill of a given experiment: write it to
-   * ~/.openclaw/skills/<skillName>.json so OpenClaw picks it up on restart.
+   * ~/.openclaw/skills/<skillId>/ so OpenClaw picks it up on next startup.
+   *
+   * Writes both SKILL.md and skill.json manifest, updates the skill status to
+   * 'deployed', logs the deployment path, records the win in improvementLog,
+   * and sends a system notification.
    *
    * Idempotent: safe to call multiple times.
    */
@@ -162,13 +172,11 @@ export const promoter = {
     // Fetch the treatment skill from the gateway (or load from store)
     const skill = await loadTreatmentSkill(experiment.treatmentSkillId);
 
-    const skillFileName = `${skill.name.toLowerCase().replace(/\s+/g, '-')}.json`;
-    const destPath = join(SKILLS_DIR, skillFileName);
+    // 1. Install skill to ~/.openclaw/skills/<skill-id>/ with SKILL.md + manifest
+    const installedPath = await skillManager.installSkill(skill, experimentId);
 
-    mkdirSync(dirname(destPath), { recursive: true });
-
-    const payload = JSON.stringify(skill, null, 2);
-    writeFileSync(destPath, payload, 'utf-8');
+    // 2. Update skill status to 'deployed'
+    skill.status = 'deployed';
 
     experiment.status = 'promoted';
     experiment.promotedAt = new Date();
@@ -176,7 +184,28 @@ export const promoter = {
     // Update in-memory record
     experimentStore.set(experimentId, experiment);
 
-    // Append to promotion log
+    // 3. Log the deployment path
+    log.info(`Deployed to ~/.openclaw/skills/${skill.id}/`, {
+      experimentId,
+      skillId: skill.id,
+      skillName: skill.name,
+      improvementPct: experiment.improvementPct,
+    });
+
+    // 4. Record the win in improvementLog
+    await improvementLog.record({
+      timestamp: new Date(),
+      type: 'experiment_won',
+      description: `Promoted skill "${skill.name}" after winning experiment ${experimentId} with ${experiment.improvementPct.toFixed(2)}% improvement`,
+      skillId: skill.id,
+      experimentId,
+      metrics: {
+        improvementPct: experiment.improvementPct,
+        afterScore: experiment.statisticalSignificance * 100,
+      },
+    });
+
+    // 5. Append to promotion log
     appendPromotionLog({
       experimentId,
       skillId: skill.id,
@@ -186,11 +215,14 @@ export const promoter = {
       confidence: experiment.statisticalSignificance,
     });
 
-    log.info(`✅ Promoted skill "${skill.name}" → ${destPath}`, {
+    log.info(`✅ Promoted skill "${skill.name}" → ${installedPath}`, {
       experimentId,
       skillId: skill.id,
       improvementPct: experiment.improvementPct,
     });
+
+    // 5. System notification
+    console.log(`[SYSTEM_NOTIFY] 🎉 Skill promoted and deployed: ${skill.name} → ~/.openclaw/skills/${skill.id}/`);
   },
 };
 

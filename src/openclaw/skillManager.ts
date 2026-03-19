@@ -24,7 +24,7 @@ export class SkillManager {
     }
   }
 
-  async installSkill(skill: GeneratedSkill): Promise<string> {
+  async installSkill(skill: GeneratedSkill, experimentId?: string): Promise<string> {
     const dir = join(this.skillsDir, skill.id);
     await mkdir(dir, { recursive: true });
 
@@ -45,6 +45,16 @@ export class SkillManager {
     ].join('\n');
 
     await writeFile(join(dir, 'SKILL.md'), skillContent, 'utf-8');
+
+    const manifest = {
+      name: skill.name,
+      version: '1.0.0',
+      description: skill.description,
+      triggerPhrases: skill.triggerPhrases,
+      generatedAt: skill.generatedAt instanceof Date ? skill.generatedAt.toISOString() : skill.generatedAt,
+      experimentId,
+    };
+    await writeFile(join(dir, 'skill.json'), JSON.stringify(manifest, null, 2), 'utf-8');
     await writeFile(join(dir, 'meta.json'), JSON.stringify(skill, null, 2), 'utf-8');
     return dir;
   }
