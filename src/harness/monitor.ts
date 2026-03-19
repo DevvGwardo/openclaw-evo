@@ -106,7 +106,7 @@ export class HarnessMonitor {
     this.abortController = new AbortController();
 
     console.log(
-      `[HarnessMonitor] Starting — gateway: ${this.config.gatewayUrl}, poll interval: ${this.config.pollIntervalMs}ms`
+      `[HarnessMonitor] Starting — gateway: ${this.config.gatewayUrl}, poll interval: ${this.config.pollIntervalMs}ms, idle threshold: ${this.config.idleThresholdMs}ms`
     );
 
     this.pollLoop().catch((err) => {
@@ -161,7 +161,22 @@ export class HarnessMonitor {
     while (!this.abortController?.signal.aborted) {
       await this.safeSleep(this.config.pollIntervalMs);
       if (this.abortController?.signal.aborted) break;
+      this.checkIdleSessions();
       await this.pollGateway();
+    }
+  }
+
+  /** Warn about sessions that have been silent longer than idleThresholdMs */
+  private checkIdleSessions(): void {
+    const now = Date.now();
+    for (const [sessionId, lastTs] of this.lastEventPerSession) {
+      const idleMs = now - lastTs;
+      if (idleMs > this.config.idleThresholdMs) {
+        console.warn(
+          `[HarnessMonitor] Session "${sessionId}" has been idle for ${Math.round(idleMs / 1000)}s ` +
+            `(threshold: ${this.config.idleThresholdMs}ms)`
+        );
+      }
     }
   }
 
