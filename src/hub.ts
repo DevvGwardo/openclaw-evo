@@ -8,6 +8,8 @@
 import chalk from 'chalk';
 import { DEFAULT_CONFIG } from './constants.js';
 import { HarnessMonitor } from './harness/monitor.js';
+import { Gateway } from './openclaw/gateway.js';
+import { SessionManager } from './openclaw/sessionManager.js';
 import { scoreSessions } from './evaluator/scorer.js';
 import { scorePerTool } from './evaluator/reportGenerator.js';
 import { analyze } from './evaluator/reportGenerator.js';
@@ -20,8 +22,6 @@ import { promoter } from './experiment/promoter.js';
 import { MemoryStore } from './memory/store.js';
 import { failureCorpus } from './memory/failureCorpus.js';
 import { improvementLog } from './memory/improvementLog.js';
-import { Gateway } from './openclaw/gateway.js';
-import { SessionManager } from './openclaw/sessionManager.js';
 import { SkillManager } from './openclaw/skillManager.js';
 import type {
   EvoConfig,
@@ -373,6 +373,51 @@ export class EvoHub {
   async runOnce(): Promise<void> {
     await this.store.init();
     this.running = true;
+
+    // Fetch live sessions from the gateway directly (monitor may not be started)
+    try {
+      const gateway = new Gateway(this.config.OPENCLAW_GATEWAY_URL);
+      const sessionManager = new SessionManager(gateway);
+      const sessions = await sessionManager.getActiveSessions();
+      const now = Date.now();
+
+      for (const session of sessions) {
+        try {
+          const messages = await gateway.getSessionHistory(session.key, 50, true);
+          const toolCalls = messages
+            .filter((m) => m.role === 'assistant' && Array.isArray(m.content))
+            .flatMap((m) =>
+              (m.content as Array<{ type: string; text?: string }>)
+                .filter((c) => c.type === 'tool_use')
+            );
+          const errorCount = messages.filter(
+            (m) =>
+              m.role === 'assistant' &&
+              Array.isArray(m.content) &&
+              (m.content as Array<{ type: string; text?: string }>).some(
+                (c) => c.type === 'text' && typeof c.text === 'string' && c.text.toLowerCase().includes('error')
+              )
+          ).length;
+
+          this.recentMetrics.push({
+            sessionId: session.key,
+            toolCalls: [], // already parsed above
+            startTime: session.updatedAt ?? now - 60000,
+            endTime: now,
+            success: errorCount === 0,
+            errorCount,
+            totalToolCalls: toolCalls.length,
+            avgLatencyMs: 0,
+          });
+        } catch {
+          // Skip sessions we can't read
+        }
+      }
+      this.log('info', `✓ Fetched ${sessions.length} live session(s) from gateway`);
+    } catch (err) {
+      this.log('warn', `Could not fetch live sessions: ${err}`);
+    }
+
     await this.runEvolutionCycle();
   }
 
