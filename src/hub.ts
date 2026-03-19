@@ -68,7 +68,7 @@ export class EvoHub {
     this.log('info', `  Min improvement: ${this.config.MIN_IMPROVEMENT_PCT}%`);
     this.log('info', `  Experiment sessions: ${this.config.EXPERIMENT_SESSIONS}`);
 
-    // Attempt to resume from last checkpoint
+    // Attempt to resume from last checkpoint (fire-and-forget in constructor)
     void this.resume();
   }
 
@@ -371,6 +371,9 @@ export class EvoHub {
   // ── CLI trigger ────────────────────────────────────────────────────────────
 
   async runOnce(): Promise<void> {
+    // Wait for any in-progress resume() from constructor to finish
+    // so we don't race on this.running = false
+    await this.resume();
     await this.store.init();
     this.running = true;
 
