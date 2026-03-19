@@ -1,5 +1,5 @@
-// evoClient.ts - fetches evolution data from OpenClaw gateway
-// Uses setInterval to poll for session data; calculates metrics client-side
+// evoClient.ts — fetches evolution data from the Evo hub API server
+// Polls /api/* endpoints and maps responses to dashboard types
 
 import type {
   DashboardData,
@@ -18,11 +18,121 @@ function jitter(ms: number): number {
   return ms + Math.floor(Math.random() * 1000);
 }
 
-function calcScoreFromCycles(cycles: EvolutionCycle[]): number {
-  if (!cycles.length) return 0;
-  const completed = cycles.filter((c) => c.status === 'completed' && c.score !== null);
-  if (!completed.length) return 0;
-  return Math.round((completed.reduce((s, c) => s + (c.score ?? 0), 0) / completed.length) * 100);
+// ---------- API client ----------
+
+async function fetchJson<T>(path: string): Promise<T | null> {
+  try {
+    const res = await fetch(path, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- Data mappers ----------
+// The hub API returns data in src/types.ts format. We map it to dashboard types.
+
+async function getHubStatus(): Promise<HubStatus> {
+  const raw = await fetchJson<Record<string, unknown>>('/api/status');
+  if (raw) {
+    const cycle = raw.currentCycle as Record<string, unknown> | undefined;
+    return {
+      running: raw.running === true,
+      phase: (cycle?.status as HubStatus['phase']) ?? (raw.running ? 'idle' : 'idle'),
+      cycleCount: (raw.totalCyclesRun as number) ?? 0,
+      lastCycleAt: raw.lastCycleAt ? String(raw.lastCycleAt) : null,
+      uptimeSeconds: 0,
+    };
+  }
+  return { running: false, phase: 'idle', cycleCount: 0, lastCycleAt: null, uptimeSeconds: 0 };
+}
+
+async function getCycles(): Promise<EvolutionCycle[]> {
+  const raw = await fetchJson<unknown[]>('/api/cycles');
+  if (!Array.isArray(raw)) return [];
+
+  return raw.map((c: unknown, i: number) => {
+    const cycle = c as Record<string, unknown>;
+    const phases = cycle.phases as Record<string, unknown> | undefined;
+    const evalPhase = phases?.evaluate as Record<string, unknown> | undefined;
+
+    return {
+      id: String(cycle.id ?? `cycle-${i}`),
+      cycleIndex: (cycle.cycleNumber as number) ?? i + 1,
+      startedAt: String(cycle.startedAt ?? new Date().toISOString()),
+      completedAt: cycle.completedAt ? String(cycle.completedAt) : null,
+      phase: String(cycle.status ?? 'completed'),
+      status: (cycle.status as EvolutionCycle['status']) ?? 'completed',
+      score: evalPhase?.overallScore != null ? Number(evalPhase.overallScore) / 100 : null,
+      summary: `Cycle ${(cycle.cycleNumber as number) ?? i + 1}`,
+    };
+  });
+}
+
+async function getSkills(): Promise<ProposedSkill[]> {
+  const raw = await fetchJson<unknown[]>('/api/skills');
+  if (!Array.isArray(raw)) return [];
+
+  return raw.map((s: unknown) => {
+    const skill = s as Record<string, unknown>;
+    return {
+      id: String(skill.id ?? ''),
+      name: String(skill.name ?? ''),
+      description: String(skill.description ?? ''),
+      confidence: Math.round(((skill.confidence as number) ?? 0) * 100),
+      targetFailure: String(skill.targetFailurePattern ?? ''),
+      targetFailureId: String(skill.targetFailurePattern ?? ''),
+      status: (skill.status as ProposedSkill['status']) ?? 'pending',
+      createdAt: String(skill.createdAt ?? new Date().toISOString()),
+      filePath: (skill.filePath as string) ?? null,
+    };
+  });
+}
+
+async function getExperiments(): Promise<Experiment[]> {
+  const raw = await fetchJson<unknown[]>('/api/experiments');
+  if (!Array.isArray(raw)) return [];
+
+  return raw.map((e: unknown) => {
+    const exp = e as Record<string, unknown>;
+    const control = exp.controlResults as unknown[] | undefined;
+    const treatment = exp.treatmentResults as unknown[] | undefined;
+
+    const controlRate = control?.length
+      ? control.filter((r: unknown) => (r as Record<string, unknown>).success).length / control.length * 100
+      : 0;
+    const treatmentRate = treatment?.length
+      ? treatment.filter((r: unknown) => (r as Record<string, unknown>).success).length / treatment.length * 100
+      : 0;
+    const improvement = controlRate > 0 ? ((treatmentRate - controlRate) / controlRate) * 100 : 0;
+
+    return {
+      id: String(exp.id ?? ''),
+      name: String(exp.name ?? exp.id ?? ''),
+      type: 'A/B' as const,
+      status: (exp.status as Experiment['status']) ?? 'running',
+      startedAt: String(exp.startedAt ?? new Date().toISOString()),
+      metrics: {
+        control: Math.round(controlRate),
+        variant: Math.round(treatmentRate),
+        improvement: Math.round(improvement * 10) / 10,
+        sampleSize: (control?.length ?? 0) + (treatment?.length ?? 0),
+        significance: (exp.confidence as number) ?? 0,
+      },
+      proposedSkillId: (exp.treatmentSkillId as string) ?? null,
+    };
+  });
+}
+
+async function getFailurePatterns(): Promise<FailurePattern[]> {
+  // The hub doesn't have a dedicated failure patterns endpoint yet,
+  // but we can derive some info from the status
+  const status = await fetchJson<Record<string, unknown>>('/api/status');
+  if (!status) return [];
+
+  // Return empty — the hub would need a /api/failures endpoint to serve real data
+  return [];
 }
 
 function buildScoreHistory(cycles: EvolutionCycle[]): ScorePoint[] {
@@ -36,209 +146,28 @@ function buildScoreHistory(cycles: EvolutionCycle[]): ScorePoint[] {
     }));
 }
 
-// ---------- Mock data for demo / offline mode ----------
-
-function mockFailurePatterns(): FailurePattern[] {
-  return [
-    {
-      id: 'fp-1',
-      toolName: 'exec',
-      errorType: 'ENOENT',
-      message: 'Command not found in PATH',
-      frequency: 12,
-      severity: 'medium',
-      firstSeen: new Date(Date.now() - 86400000 * 3).toISOString(),
-      lastSeen: new Date(Date.now() - 3600000).toISOString(),
-      occurrences: 14,
-    },
-    {
-      id: 'fp-2',
-      toolName: 'read',
-      errorType: 'EACCES',
-      message: 'Permission denied reading file',
-      frequency: 7,
-      severity: 'high',
-      firstSeen: new Date(Date.now() - 86400000 * 2).toISOString(),
-      lastSeen: new Date(Date.now() - 7200000).toISOString(),
-      occurrences: 9,
-    },
-    {
-      id: 'fp-3',
-      toolName: 'web_fetch',
-      errorType: 'TIMEOUT',
-      message: 'Request timed out after 30000ms',
-      frequency: 5,
-      severity: 'medium',
-      firstSeen: new Date(Date.now() - 86400000).toISOString(),
-      lastSeen: new Date(Date.now() - 1800000).toISOString(),
-      occurrences: 6,
-    },
-    {
-      id: 'fp-4',
-      toolName: 'exec',
-      errorType: 'EXIT_NON_ZERO',
-      message: 'Process exited with code 1',
-      frequency: 3,
-      severity: 'low',
-      firstSeen: new Date(Date.now() - 86400000 * 5).toISOString(),
-      lastSeen: new Date(Date.now() - 86400000).toISOString(),
-      occurrences: 4,
-    },
-  ];
-}
-
-function mockCycles(): EvolutionCycle[] {
-  const phases = ['observing', 'analyzing', 'proposing', 'deploying', 'testing'];
-  return Array.from({ length: 8 }, (_, i) => {
-    const started = new Date(Date.now() - (8 - i) * 3600000).toISOString();
-    const completed = i < 7 ? new Date(started).getTime() + 1800000 : null;
-    return {
-      id: `cycle-${i}`,
-      cycleIndex: i + 1,
-      startedAt: started,
-      completedAt: completed ? new Date(completed).toISOString() : null,
-      phase: phases[i % phases.length],
-      status: i < 7 ? 'completed' : 'running',
-      score: i < 7 ? 0.6 + Math.random() * 0.35 : null,
-      summary: `Cycle ${i + 1}: ${phases[i % phases.length]} phase completed.`,
-    };
-  });
-}
-
-function mockProposedSkills(): ProposedSkill[] {
-  return [
-    {
-      id: 'ps-1',
-      name: 'retry-exec',
-      description: 'Auto-retry failed exec calls up to 3 times with exponential backoff',
-      confidence: 91,
-      targetFailure: 'exec ENOENT/EXIT_NON_ZERO',
-      targetFailureId: 'fp-1',
-      status: 'pending',
-      createdAt: new Date(Date.now() - 600000).toISOString(),
-      filePath: null,
-    },
-    {
-      id: 'ps-2',
-      name: 'file-permission-guard',
-      description: 'Pre-check file permissions before read/write to surface clearer errors',
-      confidence: 78,
-      targetFailure: 'read EACCES',
-      targetFailureId: 'fp-2',
-      status: 'approved',
-      createdAt: new Date(Date.now() - 1800000).toISOString(),
-      filePath: '~/.openclaw/skills/retry-exec/SKILL.md',
-    },
-    {
-      id: 'ps-3',
-      name: 'web-fetch-timeout-resolve',
-      description: 'Gracefully handle web_fetch timeouts with cached fallback',
-      confidence: 65,
-      targetFailure: 'web_fetch TIMEOUT',
-      targetFailureId: 'fp-3',
-      status: 'rejected',
-      createdAt: new Date(Date.now() - 3600000).toISOString(),
-      filePath: null,
-    },
-  ];
-}
-
-function mockExperiments(): Experiment[] {
-  return [
-    {
-      id: 'exp-1',
-      name: 'exec-retry-v2',
-      type: 'A/B',
-      status: 'running',
-      startedAt: new Date(Date.now() - 3600000).toISOString(),
-      metrics: { control: 72, variant: 84, improvement: 16.7, sampleSize: 120, significance: 0.94 },
-      proposedSkillId: 'ps-1',
-    },
-    {
-      id: 'exp-2',
-      name: 'shadow-file-perms',
-      type: 'shadow',
-      status: 'running',
-      startedAt: new Date(Date.now() - 7200000).toISOString(),
-      metrics: { control: 68, variant: 79, improvement: 16.2, sampleSize: 45, significance: 0.71 },
-      proposedSkillId: 'ps-2',
-    },
-  ];
-}
-
-// ---------- API client ----------
-
-async function fetchRaw(path: string): Promise<unknown> {
-  try {
-    const res = await fetch(`/api${path}`, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function getHubStatus(): Promise<HubStatus> {
-  const raw = await fetchRaw('/session/status');
-  if (raw && typeof raw === 'object') {
-    const s = raw as Record<string, unknown>;
-    return {
-      running: s.running === true || s.active === true,
-      phase: (s.phase as HubStatus['phase']) ?? 'idle',
-      cycleCount: (s.cycleCount as number) ?? (s.cycle as number) ?? 0,
-      lastCycleAt: (s.lastCycleAt as string) ?? (s.lastCycle as string) ?? null,
-      uptimeSeconds: (s.uptimeSeconds as number) ?? (s.uptime as number) ?? 0,
-    };
-  }
-  // Fallback mock
-  return {
-    running: true,
-    phase: 'analyzing',
-    cycleCount: 8,
-    lastCycleAt: new Date(Date.now() - 600000).toISOString(),
-    uptimeSeconds: 86400,
-  };
-}
-
 async function getMetrics(): Promise<DashboardMetrics> {
-  const [hub, cycles, patterns] = await Promise.all([
+  const [hub, cycles, skills, experiments] = await Promise.all([
     getHubStatus(),
-    fetchRaw('/session/cycles').catch(() => null),
-    fetchRaw('/evo/failures').catch(() => null),
+    getCycles(),
+    getSkills(),
+    getExperiments(),
   ]);
 
-  const cyclesData: EvolutionCycle[] = Array.isArray(cycles) ? cycles : mockCycles();
-  const patternsData: FailurePattern[] = Array.isArray(patterns) ? patterns : mockFailurePatterns();
+  const completedCycles = cycles.filter(c => c.status === 'completed' && c.score !== null);
+  const overallScore = completedCycles.length > 0
+    ? Math.round(completedCycles.reduce((s, c) => s + ((c.score ?? 0) * 100), 0) / completedCycles.length)
+    : 0;
 
   return {
     totalCycles: hub.cycleCount,
-    deployedSkills: 3,
-    activeExperiments: mockExperiments().filter((e) => e.status === 'running').length,
-    failurePatterns: patternsData.length,
-    overallScore: calcScoreFromCycles(cyclesData),
-    scoreHistory: buildScoreHistory(cyclesData),
+    deployedSkills: skills.filter(s => s.status === 'deployed').length,
+    activeExperiments: experiments.filter(e => e.status === 'running').length,
+    failurePatterns: 0,
+    overallScore,
+    scoreHistory: buildScoreHistory(cycles),
     uptimeSeconds: hub.uptimeSeconds,
   };
-}
-
-async function getFailurePatterns(): Promise<FailurePattern[]> {
-  const raw = await fetchRaw('/evo/failures');
-  return Array.isArray(raw) ? raw : mockFailurePatterns();
-}
-
-async function getCycles(): Promise<EvolutionCycle[]> {
-  const raw = await fetchRaw('/session/cycles');
-  return Array.isArray(raw) ? raw : mockCycles();
-}
-
-async function getProposedSkills(): Promise<ProposedSkill[]> {
-  const raw = await fetchRaw('/evo/proposed-skills');
-  return Array.isArray(raw) ? raw : mockProposedSkills();
-}
-
-async function getExperiments(): Promise<Experiment[]> {
-  const raw = await fetchRaw('/evo/experiments');
-  return Array.isArray(raw) ? raw : mockExperiments();
 }
 
 async function getDashboardData(): Promise<DashboardData> {
@@ -248,7 +177,7 @@ async function getDashboardData(): Promise<DashboardData> {
       getMetrics(),
       getFailurePatterns(),
       getCycles(),
-      getProposedSkills(),
+      getSkills(),
       getExperiments(),
     ]);
 
@@ -262,7 +191,7 @@ type Listener = (data: DashboardData) => void;
 function createPollingClient() {
   let listeners: Listener[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let interval = POLL_INTERVAL_MS;
+  const interval = POLL_INTERVAL_MS;
 
   async function poll() {
     try {
@@ -304,13 +233,13 @@ export const evoClient = {
   getDashboardData,
   getFailurePatterns,
   getCycles,
-  getProposedSkills,
+  getProposedSkills: getSkills,
   getExperiments,
   approveSkill: async (id: string): Promise<void> => {
-    await fetch(`/api/evo/skills/${id}/approve`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+    await fetch(`/api/approvals/${id}/approve`, { method: 'POST', signal: AbortSignal.timeout(5000) });
   },
   rejectSkill: async (id: string): Promise<void> => {
-    await fetch(`/api/evo/skills/${id}/reject`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+    await fetch(`/api/approvals/${id}/reject`, { method: 'POST', signal: AbortSignal.timeout(5000) });
   },
   polling: createPollingClient(),
 };
