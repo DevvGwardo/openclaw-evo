@@ -284,13 +284,13 @@ describe('builder/skillGenerator.ts', () => {
       expect(selectTemplateType(fp3)).toBe('file_manipulation');
     });
 
-    it('returns "web_search" for search-related failures', () => {
+    it('returns "web_research" for search-related failures', () => {
       const fp = makeFailurePattern({
         toolName: 'search',
         errorType: 'timeout',
         errorMessage: 'Search timeout after 10s',
       });
-      expect(selectTemplateType(fp)).toBe('web_search');
+      expect(selectTemplateType(fp)).toBe('web_research');
     });
 
     it('returns "api_call" for HTTP/network errors', () => {
@@ -311,23 +311,23 @@ describe('builder/skillGenerator.ts', () => {
       expect(selectTemplateType(fp)).toBe('data_processing');
     });
 
-    it('returns "code_review" for code/lint errors', () => {
+    it('returns "code_debug" for code/lint errors', () => {
       const fp = makeFailurePattern({
         toolName: 'lint',
         errorType: 'validation_error',
         errorMessage: 'ESLint error: unused variable',
       });
-      expect(selectTemplateType(fp)).toBe('code_review');
+      expect(selectTemplateType(fp)).toBe('code_debug');
     });
 
-    it('returns "Code Debug" for generic error type patterns', () => {
+    it('returns "code_debug" for generic error type patterns', () => {
       const fp = makeFailurePattern({
         toolName: 'unknown_tool',
         errorType: 'unknown',
         errorMessage: 'Something went wrong',
       });
-      // Unknown patterns fall back to Code Debug (the generic debugging template)
-      expect(selectTemplateType(fp)).toBe('Code Debug');
+      // Unknown patterns fall back to code_debug (the generic debugging template)
+      expect(selectTemplateType(fp)).toBe('code_debug');
     });
   });
 
