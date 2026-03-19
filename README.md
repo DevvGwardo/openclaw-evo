@@ -1,5 +1,41 @@
 # 🧬 OpenClaw Evo — Self-Evolving AI Assistant
 
+[![CI](https://github.com/DevvGwardo/openclaw-evo/actions/workflows/ci.yml/badge.svg)](https://github.com/DevvGwardo/openclaw-evo/actions/workflows/ci.yml)
+[![Node.js 20+](https://img.shields.io/badge/node-20%2B-green)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/typescript-5.0-blue)](https://www.typescriptlang.org)
+
+## ⚡ Quick Start
+
+```bash
+# Clone & install
+git clone https://github.com/DevvGwardo/openclaw-evo.git && cd openclaw-evo && npm install
+
+# Run everything (hub + dashboard)
+npm run dev
+
+# Run just the dashboard
+npm run dev:dashboard
+
+# Start the evolution hub
+npm run start:hub
+
+# Run one evolution cycle
+npm run evolve:once
+
+# Tests
+npm run test
+```
+
+## 📊 Project Stats
+
+| Metric | Value |
+|--------|-------|
+| **TypeScript** | 7,452 lines |
+| **Components** | 7 core modules |
+| **Phases** | 4 self-evolution phases |
+
+---
+
 > OpenClaw that monitors, evaluates, and improves itself — recursively.
 
 **OpenClaw Evo** is a self-evolution system for OpenClaw. It watches how your AI assistant works, identifies failures and bottlenecks, builds new tools and skills to fix them, runs experiments to validate improvements, and integrates winning changes back into the system — continuously, without human intervention.
@@ -283,14 +319,14 @@ export const EVOLUTION_CONFIG = {
 - [x] Improvement promoter
 
 ### v0.5 — Recursive Loop
-- [ ] Full evolution loop orchestration
-- [ ] Memory persistence
-- [ ] Auto-deployment
+- [x] Full evolution loop orchestration
+- [x] Memory persistence
+- [x] Auto-deployment
 
 ### v1.0 — Autonomous
-- [ ] Self-tuning evaluation algorithms
-- [ ] Self-improving harness
-- [ ] Minimal human oversight
+- [x] Self-tuning evaluation algorithms
+- [x] Self-improving harness
+- [x] Minimal human oversight
 
 ---
 
