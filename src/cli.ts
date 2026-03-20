@@ -83,8 +83,8 @@ function divider(label?: string): void {
   }
 }
 
-function printStatus(hub: EvoHub): void {
-  const status = hub.getStatus();
+async function printStatus(hub: EvoHub): Promise<void> {
+  const status = await hub.getStatus();
   const { running, totalCyclesRun, lastCycleAt, activeExperiments, deployedSkills } = status;
 
   divider('Hub Status');
@@ -331,7 +331,7 @@ async function startRepl(): Promise<void> {
       if (!hubReady) {
         console.log(chalk.yellow('  Hub is initialising…'));
       } else {
-        const status = hub.getStatus();
+        const status = await hub.getStatus();
         const wd = status.gatewayWatchdog;
         if (!wd) {
           console.log(chalk.gray('  Watchdog not available'));

@@ -6,6 +6,8 @@
  */
 
 import chalk from 'chalk';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DEFAULT_CONFIG } from './constants.js';
 import { HarnessMonitor } from './harness/monitor.js';
 import { Gateway } from './openclaw/gateway.js';
@@ -401,6 +403,9 @@ export class EvoHub {
         .map((s) => s.name.split('—')[0].trim().toLowerCase()),
     );
 
+    // Deduplicate: skip patterns whose skill is already deployed
+    const deployedSkillNames = getDeployedSkillNames(this.config.SKILL_OUTPUT_DIR);
+
     for (const pattern of failurePatterns.slice(0, this.config.MAX_SKILLS_PER_CYCLE)) {
       if (activeSkillPatterns.has(pattern.toolName.toLowerCase())) {
         this.log('info', chalk.gray(`  ⏩ Skipping ${pattern.toolName}/${pattern.errorType} — skill already proposed`));
@@ -409,6 +414,11 @@ export class EvoHub {
       try {
         const result = generateFromFailure(pattern);
         if (result.skill) {
+          // Skip if a skill with the same name is already deployed
+          if (deployedSkillNames.has(result.skill.name)) {
+            // silently skip — already deployed
+            continue;
+          }
           const validation = validate(result.skill);
           if (validation.valid) {
             result.skill.status = 'proposed';
@@ -670,4 +680,27 @@ export class EvoHub {
     else if (level === 'warn') console.warn(`${prefix} ${chalk.yellow('⚠')} ${msg}`);
     else console.error(`${prefix} ${chalk.red('❌')} ${msg}`);
   }
+}
+
+/**
+ * Scan the deployed skills directory and return the set of already-deployed skill names.
+ * This prevents re-deploying the same skill pattern multiple times.
+ */
+function getDeployedSkillNames(skillOutputDir: string): Set<string> {
+  const names = new Set<string>();
+  try {
+    const skillDir = skillOutputDir.replace('~', process.env.HOME ?? '');
+    const entries = readdirSync(skillDir);
+    for (const entry of entries) {
+      if (entry.startsWith('.') || entry === 'clawbert' || entry === 'moltsland') continue;
+      const skillMdPath = join(skillDir, entry, 'SKILL.md');
+      try {
+        const content = readFileSync(skillMdPath, 'utf-8');
+        // Skill name is on the first line as "# Skill Name"
+        const match = content.match(/^#\s+(.+)/);
+        if (match) names.add(match[1].trim());
+      } catch { /* no SKILL.md in this dir */ }
+    }
+  } catch { /* skills dir doesn't exist yet */ }
+  return names;
 }
