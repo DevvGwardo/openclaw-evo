@@ -213,9 +213,9 @@ describe('scorer.ts — scoreSessions()', () => {
       expect(calcEfficiency(sessions, 3)).toBe(50);
     });
 
-    it('treats zero calls as optimal (no waste)', () => {
+    it('scores zero calls as zero (no work accomplished)', () => {
       const sessions = [makeSession({ totalToolCalls: 0 })];
-      expect(calcEfficiency(sessions, 3)).toBe(100);
+      expect(calcEfficiency(sessions, 3)).toBe(0);
     });
   });
 
@@ -243,11 +243,17 @@ describe('scorer.ts — scoreSessions()', () => {
       expect(calcSpeed(sessions, 60_000)).toBe(100);
     });
 
-    it('drops below 100 when slower than baseline', () => {
+    it('drops below 100 when slower than baseline (wall-clock fallback)', () => {
       const start = Date.now() - 120_000;
-      const sessions = [makeSession({ startTime: start, endTime: Date.now() })];
+      const sessions = [makeSession({ startTime: start, endTime: Date.now(), avgLatencyMs: 0, totalToolCalls: 0 })];
       // Duration 120s, baseline 60s → (60000/120000)*100 = 50
       expect(calcSpeed(sessions, 60_000)).toBe(50);
+    });
+
+    it('uses tool latency when avgLatencyMs is available', () => {
+      const slowSessions = [makeSession({ avgLatencyMs: 12000, totalToolCalls: 10 })];
+      // Total tool time = 12000ms * 10 = 120000ms, baseline 60000ms → (60000/120000)*100 = 50
+      expect(calcSpeed(slowSessions, 60_000)).toBe(50);
     });
   });
 

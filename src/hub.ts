@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG } from './constants.js';
 import { HarnessMonitor } from './harness/monitor.js';
 import { Gateway } from './openclaw/gateway.js';
 import { SessionManager } from './openclaw/sessionManager.js';
+import { extractToolCallsFromHistory, inferTaskType } from './utils.js';
 import { scoreSessions } from './evaluator/scorer.js';
 import { scorePerTool } from './evaluator/reportGenerator.js';
 import { analyze } from './evaluator/reportGenerator.js';
@@ -101,18 +102,11 @@ export class EvoHub {
 
     // Start harness monitor
     this.monitor.addListener((event) => {
-      if (event.type === 'session_end' || event.type === 'tool_result') {
-        const metrics: SessionMetrics = {
-          sessionId: event.sessionId,
-          toolCalls: [],
-          startTime: Date.now() - 60000,
-          success: true,
-          errorCount: 0,
-          totalToolCalls: 0,
-          avgLatencyMs: 0,
-        };
-        this.recentMetrics.push(metrics);
-        if (this.recentMetrics.length > 1000) this.recentMetrics.shift();
+      // Events are logged for observability; actual metrics are collected
+      // in Phase 1 of the evolution cycle from gateway session history,
+      // which provides full tool call data for proper pattern detection.
+      if (event.type === 'session_end') {
+        this.log('info', chalk.gray(`  📡 Monitor: session ${event.sessionId} ended`));
       }
     });
 
@@ -266,30 +260,24 @@ export class EvoHub {
 
         try {
           const messages = await gateway.getSessionHistory(session.key, 50, true);
-          const toolCalls = messages
-            .filter((m) => m.role === 'assistant' && Array.isArray(m.content))
-            .flatMap((m) =>
-              (m.content as Array<{ type: string; text?: string }>)
-                .filter((c) => c.type === 'tool_use')
-            );
-          const errorCount = messages.filter(
-            (m) =>
-              m.role === 'assistant' &&
-              Array.isArray(m.content) &&
-              (m.content as Array<{ type: string; text?: string }>).some(
-                (c) => c.type === 'text' && typeof c.text === 'string' && c.text.toLowerCase().includes('error')
-              )
-          ).length;
+          const sessionStart = session.updatedAt ?? now - 60000;
+          const parsedToolCalls = extractToolCallsFromHistory(messages, sessionStart);
+          const failedCalls = parsedToolCalls.filter((tc) => !tc.success).length;
+          const completedCalls = parsedToolCalls.filter((tc) => tc.endTime != null);
+          const totalLatencyMs = completedCalls.reduce((sum, tc) => sum + (tc.endTime! - tc.startTime), 0);
+          const avgLatencyMs = completedCalls.length > 0 ? totalLatencyMs / completedCalls.length : 0;
+          const taskType = inferTaskType(session, messages);
 
           this.recentMetrics.push({
             sessionId: session.key,
-            toolCalls: [],
-            startTime: session.updatedAt ?? now - 60000,
+            toolCalls: parsedToolCalls,
+            startTime: sessionStart,
             endTime: now,
-            success: errorCount === 0,
-            errorCount,
-            totalToolCalls: toolCalls.length,
-            avgLatencyMs: 0,
+            success: failedCalls === 0 && parsedToolCalls.length > 0,
+            errorCount: failedCalls,
+            totalToolCalls: parsedToolCalls.length,
+            avgLatencyMs,
+            taskType,
           });
         } catch {
           // Skip sessions we can't read
@@ -471,30 +459,24 @@ export class EvoHub {
       for (const session of sessions) {
         try {
           const messages = await gateway.getSessionHistory(session.key, 50, true);
-          const toolCalls = messages
-            .filter((m) => m.role === 'assistant' && Array.isArray(m.content))
-            .flatMap((m) =>
-              (m.content as Array<{ type: string; text?: string }>)
-                .filter((c) => c.type === 'tool_use')
-            );
-          const errorCount = messages.filter(
-            (m) =>
-              m.role === 'assistant' &&
-              Array.isArray(m.content) &&
-              (m.content as Array<{ type: string; text?: string }>).some(
-                (c) => c.type === 'text' && typeof c.text === 'string' && c.text.toLowerCase().includes('error')
-              )
-          ).length;
+          const sessionStart = session.updatedAt ?? now - 60000;
+          const parsedToolCalls = extractToolCallsFromHistory(messages, sessionStart);
+          const failedCalls = parsedToolCalls.filter((tc) => !tc.success).length;
+          const completedCalls = parsedToolCalls.filter((tc) => tc.endTime != null);
+          const totalLatencyMs = completedCalls.reduce((sum, tc) => sum + (tc.endTime! - tc.startTime), 0);
+          const avgLatencyMs = completedCalls.length > 0 ? totalLatencyMs / completedCalls.length : 0;
+          const taskType = inferTaskType(session, messages);
 
           this.recentMetrics.push({
             sessionId: session.key,
-            toolCalls: [], // already parsed above
-            startTime: session.updatedAt ?? now - 60000,
+            toolCalls: parsedToolCalls,
+            startTime: sessionStart,
             endTime: now,
-            success: errorCount === 0,
-            errorCount,
-            totalToolCalls: toolCalls.length,
-            avgLatencyMs: 0,
+            success: failedCalls === 0 && parsedToolCalls.length > 0,
+            errorCount: failedCalls,
+            totalToolCalls: parsedToolCalls.length,
+            avgLatencyMs,
+            taskType,
           });
         } catch {
           // Skip sessions we can't read
