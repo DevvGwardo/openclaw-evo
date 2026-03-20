@@ -210,7 +210,13 @@ export class EvoHub {
       (state.activeExperiments ?? []).map((e) => [e.id, e]),
     );
     if (state.recentMetrics && state.recentMetrics.length > 0) {
-      this.recentMetrics = state.recentMetrics;
+      // Merge: keep any pre-existing metrics (e.g. injected test data) and add checkpointed ones
+      const existingIds = new Set(this.recentMetrics.map((m) => m.sessionId));
+      for (const m of state.recentMetrics) {
+        if (!existingIds.has(m.sessionId)) {
+          this.recentMetrics.push(m);
+        }
+      }
     }
     // NOTE: don't touch this.running here - resume() fires from the constructor
     // as fire-and-forget, so it can race with start() which sets running = true.

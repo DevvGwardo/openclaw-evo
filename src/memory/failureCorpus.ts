@@ -45,7 +45,8 @@ export const failureCorpus = {
     const existing = findRecord(corpus, pattern);
 
     if (existing) {
-      existing.occurrences += 1;
+      // Use the detected frequency if higher than a simple +1 increment
+      existing.occurrences = Math.max(existing.occurrences + 1, pattern.frequency ?? 1);
       existing.lastRecorded = new Date();
       existing.pattern.frequency = existing.occurrences;
       existing.pattern.lastSeen = new Date();
@@ -57,7 +58,7 @@ export const failureCorpus = {
       const newRecord: FailureRecord = {
         id: randomUUID(),
         pattern: { ...pattern },
-        occurrences: 1,
+        occurrences: pattern.frequency ?? 1,
         lastRecorded: new Date(),
         autoFixed: false,
       };
