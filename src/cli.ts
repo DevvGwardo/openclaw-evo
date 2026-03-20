@@ -245,7 +245,7 @@ async function startRepl(): Promise<void> {
       } else if (hubInitError) {
         console.log(chalk.red(`  Hub error: ${hubInitError}`));
       } else {
-        printStatus(hub);
+        await printStatus(hub);
       }
     }
 
