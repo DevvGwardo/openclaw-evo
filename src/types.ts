@@ -83,6 +83,7 @@ export interface GeneratedSkill {
   targetFailurePattern?: string;
   generatedAt: Date;
   status: 'proposed' | 'testing' | 'deployed' | 'rejected' | 'superseded' | 'pending_approval';
+  proposedAtCycle?: number;
 }
 
 export interface SkillExample {

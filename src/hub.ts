@@ -200,7 +200,16 @@ export class EvoHub {
       return;
     }
     this.cycleNumber = state.cycleNumber ?? 0;
-    this.proposedSkills = state.proposedSkills ?? [];
+    // Deduplicate proposed skills by name and drop duplicates
+    const skillsByName = new Map<string, typeof this.proposedSkills[0]>();
+    for (const s of state.proposedSkills ?? []) {
+      const existing = skillsByName.get(s.name);
+      // Keep the one with the most advanced status
+      if (!existing || s.status === 'deployed' || s.status === 'pending_approval') {
+        skillsByName.set(s.name, s);
+      }
+    }
+    this.proposedSkills = Array.from(skillsByName.values());
     this.completedCycles = (state.completedCycles ?? []).map((c) => ({
       ...c,
       startedAt: new Date(c.startedAt),
@@ -403,6 +412,7 @@ export class EvoHub {
           const validation = validate(result.skill);
           if (validation.valid) {
             result.skill.status = 'proposed';
+            result.skill.proposedAtCycle = this.cycleNumber;
             newSkills.push(result.skill);
             this.proposedSkills.push(result.skill);
             await improvementLog.record({
@@ -450,6 +460,7 @@ export class EvoHub {
             this.log('info', `🛑 Skill ${skill.name} promoted but requires human approval. Run /evo approve ${promoteResult.approvalId} to deploy.`);
           }
         } else {
+          skill.status = 'rejected';
           this.log('info', chalk.yellow(`  ⏳ Not yet: ${skill.name} (${result.improvementPct.toFixed(1)}% improvement)`));
         }
       } catch (err) {
@@ -458,6 +469,27 @@ export class EvoHub {
     }
     this.currentCycle.phases.experiment.durationMs = Date.now() - experimentStart;
     this.currentCycle.phases.experiment.experimentsRun = experimentsRun;
+
+    // Clean up completed/rejected experiments to prevent unbounded growth
+    for (const [id, exp] of this.activeExperiments) {
+      if (exp.status === 'completed' || exp.status === 'rejected' || exp.status === 'promoted') {
+        this.activeExperiments.delete(id);
+      }
+    }
+
+    // Age out proposed skills that have been stuck for too many cycles (no matching failures)
+    const MAX_PROPOSED_CYCLES = 5;
+    this.proposedSkills = this.proposedSkills.filter((s) => {
+      if (s.status !== 'proposed') return true;
+      // Skills without proposedAtCycle are from old checkpoints — treat as old enough to expire
+      const age = this.cycleNumber - (s.proposedAtCycle ?? 0);
+      if (age >= MAX_PROPOSED_CYCLES) {
+        s.status = 'rejected';
+        this.log('info', chalk.gray(`  🗑️  Expired stale proposal: ${s.name} (${age} cycles old)`));
+        return false;
+      }
+      return true;
+    });
 
     // ── Complete ────────────────────────────────────────────────────────────
     this.currentCycle.status = 'completed';
