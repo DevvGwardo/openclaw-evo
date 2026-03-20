@@ -208,6 +208,8 @@ export interface HubState {
   proposedSkills: GeneratedSkill[];
   activeExperiments: Experiment[];
   lastCheckpoint: Date;
+  /** Persisted session metrics so restarts don't lose scoring data */
+  recentMetrics?: SessionMetrics[];
 }
 
 export interface EvolutionCycle {

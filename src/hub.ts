@@ -1,5 +1,5 @@
 /**
- * OpenClaw Evo Hub — Main Orchestration
+ * OpenClaw Evo Hub - Main Orchestration
  *
  * Runs the self-evolution loop:
  * Monitor → Evaluate → Build → Experiment → Integrate → (repeat)
@@ -131,7 +131,7 @@ export class EvoHub {
           this.log('info', chalk.green(`✓ Watchdog: gateway restarted successfully (attempt #${event.attempt})`));
           break;
         case 'restart_failed':
-          this.log('error', chalk.red(`✗ Watchdog: gateway restart failed — ${event.error}`));
+          this.log('error', chalk.red(`✗ Watchdog: gateway restart failed - ${event.error}`));
           break;
         case 'max_restarts':
           this.log('error', chalk.red(`🚨 Watchdog: max restarts reached (${event.total}). Manual intervention required.`));
@@ -184,6 +184,7 @@ export class EvoHub {
       proposedSkills: this.proposedSkills,
       activeExperiments: Array.from(this.activeExperiments.values()),
       lastCheckpoint: new Date(),
+      recentMetrics: this.recentMetrics.slice(-100),
     };
     await this.store.save('hub-state', state);
   }
@@ -195,7 +196,7 @@ export class EvoHub {
   async resume(): Promise<void> {
     const state = await this.store.load<HubState>('hub-state');
     if (!state) {
-      this.log('info', 'No checkpoint found — starting fresh');
+      this.log('info', 'No checkpoint found - starting fresh');
       return;
     }
     this.cycleNumber = state.cycleNumber ?? 0;
@@ -208,9 +209,12 @@ export class EvoHub {
     this.activeExperiments = new Map(
       (state.activeExperiments ?? []).map((e) => [e.id, e]),
     );
-    // NOTE: don't touch this.running here — resume() fires from the constructor
+    if (state.recentMetrics && state.recentMetrics.length > 0) {
+      this.recentMetrics = state.recentMetrics;
+    }
+    // NOTE: don't touch this.running here - resume() fires from the constructor
     // as fire-and-forget, so it can race with start() which sets running = true.
-    this.log('info', `✓ Resumed from checkpoint — cycle #${this.cycleNumber}, ${this.completedCycles.length} cycles completed`);
+    this.log('info', `✓ Resumed from checkpoint - cycle #${this.cycleNumber}, ${this.completedCycles.length} cycles completed`);
   }
 
   getCompletedCycles(): EvolutionCycle[] {
@@ -230,10 +234,10 @@ export class EvoHub {
     }, intervalMs);
   }
 
-  async runEvolutionCycle(): Promise<void> {
+  async runEvolutionCycle(): Promise<EvolutionCycle | void> {
     if (!this.running) return;
     if (this.cycleRunning) {
-      this.log('warn', 'Skipping cycle — previous cycle still running');
+      this.log('warn', 'Skipping cycle - previous cycle still running');
       if (this.running) this.scheduleNextCycle(this.config.CYCLE_INTERVAL_MS);
       return;
     }
@@ -319,7 +323,7 @@ export class EvoHub {
       this.currentCycle.phases.monitor.eventsProcessed = this.recentMetrics.length;
       this.log('info', chalk.gray(`  📡 Monitor: ${sessions.length} sessions fetched, ${this.recentMetrics.length} total metrics`));
     } catch (err) {
-      this.log('warn', `Monitor phase: could not fetch sessions — ${err}`);
+      this.log('warn', `Monitor phase: could not fetch sessions - ${err}`);
       this.currentCycle.phases.monitor.eventsProcessed = this.recentMetrics.length;
     }
     this.currentCycle.phases.monitor.durationMs = Date.now() - monitorStart;
@@ -465,13 +469,17 @@ export class EvoHub {
     if (this.running) {
       this.scheduleNextCycle(this.config.CYCLE_INTERVAL_MS);
     }
+
+    return this.currentCycle;
   }
 
   // ── Status ────────────────────────────────────────────────────────────────
 
-  getStatus(): HubStatus {
-    const statsPromise = improvementLog.getStats();
-    const patternsPromise = failureCorpus.getPatterns(0);
+  async getStatus(): Promise<HubStatus> {
+    const [stats, patterns] = await Promise.all([
+      improvementLog.getStats(),
+      failureCorpus.getPatterns(0),
+    ]);
     return {
       running: this.running,
       currentCycle: this.currentCycle ?? undefined,
@@ -479,7 +487,7 @@ export class EvoHub {
       lastCycleAt: this.currentCycle?.completedAt,
       activeExperiments: this.activeExperiments.size,
       deployedSkills: this.proposedSkills.filter((s) => s.status === 'deployed').length,
-      knownFailurePatterns: 0, // resolved async, caller should await getStatusAsync
+      knownFailurePatterns: patterns.length,
       memorySize: this.store.estimateSize(),
       gatewayWatchdog: this.watchdog.getState(),
     };
@@ -491,6 +499,15 @@ export class EvoHub {
 
   getActiveExperiments(): Experiment[] {
     return Array.from(this.activeExperiments.values());
+  }
+
+  getConfig(): EvoConfig {
+    return { ...DEFAULT_CONFIG };
+  }
+
+  async restart(): Promise<void> {
+    this.stop();
+    await this.start();
   }
 
   // ── Test helpers ─────────────────────────────────────────────────────────
