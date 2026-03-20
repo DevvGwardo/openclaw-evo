@@ -191,22 +191,22 @@ export function calcAccuracy(sessions: SessionMetrics[]): number {
 }
 
 /**
- * Efficiency: how close actual tool calls are to optimal.
- *   min(100, optimalCalls / actualCalls × 100)
+ * Efficiency: ratio of successful tool calls to total tool calls.
  *
- * A session that uses exactly optimalCalls gets 100.
- * Fewer calls than optimal are penalised (over-efficiency is capped at 100).
- * We treat "too many calls" as inefficient — ratio inverts.
+ * Measures how much useful work was done vs wasted effort (failed/retried calls).
+ * A session where every call succeeds gets 100. A session with 50% failures gets 50.
+ * Sessions with 0 calls get 0 (no work accomplished).
+ *
+ * The `optimalCalls` parameter is kept for API compatibility but no longer used —
+ * a flat "optimal" count penalised normal multi-step agent workflows unfairly.
  */
-export function calcEfficiency(sessions: SessionMetrics[], optimalCalls: number): number {
+export function calcEfficiency(sessions: SessionMetrics[], _optimalCalls?: number): number {
   if (sessions.length === 0) return 0;
 
   const scores = sessions.map((s) => {
-    if (s.totalToolCalls === 0) return 0; // no tool calls = no work accomplished
-    // ratio > 1 means we used fewer calls than optimal (good)
-    // ratio < 1 means we used more calls than optimal (bad)
-    const ratio = optimalCalls / s.totalToolCalls;
-    return Math.min(100, ratio * 100);
+    if (s.totalToolCalls === 0) return 0;
+    const successfulCalls = s.totalToolCalls - s.errorCount;
+    return (successfulCalls / s.totalToolCalls) * 100;
   });
 
   return cap100(scores.reduce((a, b) => a + b, 0) / scores.length);
