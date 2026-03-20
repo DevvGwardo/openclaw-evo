@@ -126,13 +126,23 @@ async function getExperiments(): Promise<Experiment[]> {
 }
 
 async function getFailurePatterns(): Promise<FailurePattern[]> {
-  // The hub doesn't have a dedicated failure patterns endpoint yet,
-  // but we can derive some info from the status
-  const status = await fetchJson<Record<string, unknown>>('/api/status');
-  if (!status) return [];
+  const raw = await fetchJson<unknown[]>('/api/failures');
+  if (!Array.isArray(raw)) return [];
 
-  // Return empty — the hub would need a /api/failures endpoint to serve real data
-  return [];
+  return raw.map((p: unknown) => {
+    const pat = p as Record<string, unknown>;
+    return {
+      id: String(pat.id ?? ''),
+      toolName: String(pat.toolName ?? ''),
+      errorType: String(pat.errorType ?? ''),
+      message: String(pat.errorMessage ?? ''),
+      frequency: (pat.frequency as number) ?? 0,
+      severity: (pat.severity as FailurePattern['severity']) ?? 'low',
+      firstSeen: String(pat.firstSeen ?? ''),
+      lastSeen: String(pat.lastSeen ?? ''),
+      occurrences: (pat.frequency as number) ?? 0,
+    };
+  });
 }
 
 function buildScoreHistory(cycles: EvolutionCycle[]): ScorePoint[] {
@@ -147,11 +157,12 @@ function buildScoreHistory(cycles: EvolutionCycle[]): ScorePoint[] {
 }
 
 async function getMetrics(): Promise<DashboardMetrics> {
-  const [hub, cycles, skills, experiments] = await Promise.all([
+  const [hub, cycles, skills, experiments, failures] = await Promise.all([
     getHubStatus(),
     getCycles(),
     getSkills(),
     getExperiments(),
+    getFailurePatterns(),
   ]);
 
   const completedCycles = cycles.filter(c => c.status === 'completed' && c.score !== null);
@@ -163,7 +174,7 @@ async function getMetrics(): Promise<DashboardMetrics> {
     totalCycles: hub.cycleCount,
     deployedSkills: skills.filter(s => s.status === 'deployed').length,
     activeExperiments: experiments.filter(e => e.status === 'running').length,
-    failurePatterns: 0,
+    failurePatterns: failures.length,
     overallScore,
     scoreHistory: buildScoreHistory(cycles),
     uptimeSeconds: hub.uptimeSeconds,
@@ -240,6 +251,14 @@ export const evoClient = {
   },
   rejectSkill: async (id: string): Promise<void> => {
     await fetch(`/api/approvals/${id}/reject`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+  },
+  triggerEvolve: async (): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/evolve', { method: 'POST', signal: AbortSignal.timeout(60000) });
+      return res.ok;
+    } catch {
+      return false;
+    }
   },
   polling: createPollingClient(),
 };

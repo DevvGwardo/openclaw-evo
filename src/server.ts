@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { EvoHub } from './hub.js';
 import { improvementLog } from './memory/improvementLog.js';
 import { promoter } from './experiment/promoter.js';
+import { failureCorpus } from './memory/failureCorpus.js';
 import { DEFAULT_CONFIG } from './constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -215,6 +216,14 @@ function createRouter(hub: EvoHub) {
 
       if (url === '/api/experiments') {
         jsonResponse(res, 200, hub.getActiveExperiments());
+        return;
+      }
+
+      // GET /api/failures — known failure patterns from the corpus
+      if (url === '/api/failures') {
+        failureCorpus.getPatterns(0)
+          .then((patterns) => jsonResponse(res, 200, patterns))
+          .catch((err) => sendError(res, 500, String(err)));
         return;
       }
 
