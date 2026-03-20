@@ -35,7 +35,7 @@ export class SessionManager {
       sessionId: sessionKey,
       toolCalls,
       startTime: now - 60000,
-      success: failedCalls === 0 && toolCalls.length > 0,
+      success: failedCalls === 0,
       errorCount: failedCalls,
       totalToolCalls: toolCalls.length,
       avgLatencyMs,
