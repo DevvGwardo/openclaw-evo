@@ -339,6 +339,10 @@ export class EvoHub {
     let report: EvaluationReport;
 
     try {
+      // Decay stale failure patterns that haven't recurred recently
+      const decayed = await failureCorpus.decay();
+      if (decayed > 0) this.log('info', chalk.gray(`  🧹 Decayed ${decayed} stale failure pattern(s)`));
+
       const recentSessions = this.recentMetrics.slice(-100);
       const overallScore = scoreSessions(recentSessions);
       const toolScores = scorePerTool(recentSessions);
@@ -381,7 +385,18 @@ export class EvoHub {
     const newSkills: GeneratedSkill[] = [];
     const failurePatterns = await failureCorpus.getPatterns(this.config.FAILURE_THRESHOLD);
 
+    // Skip patterns that already have an active skill (avoid duplicate proposals)
+    const activeSkillPatterns = new Set(
+      this.proposedSkills
+        .filter((s) => s.status !== 'rejected')
+        .map((s) => s.name.split('—')[0].trim().toLowerCase()),
+    );
+
     for (const pattern of failurePatterns.slice(0, this.config.MAX_SKILLS_PER_CYCLE)) {
+      if (activeSkillPatterns.has(pattern.toolName.toLowerCase())) {
+        this.log('info', chalk.gray(`  ⏩ Skipping ${pattern.toolName}/${pattern.errorType} — skill already proposed`));
+        continue;
+      }
       try {
         const result = generateFromFailure(pattern);
         if (result.skill) {

@@ -90,6 +90,32 @@ export const failureCorpus = {
   },
 
   /**
+   * Decay patterns that haven't been seen recently.
+   * Called each cycle — halves occurrences for patterns not seen in the last
+   * `maxAgeMs` (default 30 min). Removes patterns that decay below 1.
+   */
+  async decay(maxAgeMs = 30 * 60 * 1000): Promise<number> {
+    const corpus = (await store.load<FailureCorpus>(CORPUS_KEY)) ?? emptyCorpus();
+    const now = Date.now();
+    const before = corpus.failures.length;
+
+    corpus.failures = corpus.failures.filter((r) => {
+      const age = now - new Date(r.lastRecorded).getTime();
+      if (age <= maxAgeMs) return true; // still fresh
+      r.occurrences = Math.floor(r.occurrences / 2);
+      r.pattern.frequency = r.occurrences;
+      return r.occurrences >= 1; // remove if decayed to 0
+    });
+
+    const removed = before - corpus.failures.length;
+    if (removed > 0) {
+      corpus.lastUpdated = new Date();
+      await store.save(CORPUS_KEY, corpus);
+    }
+    return removed;
+  },
+
+  /**
    * Mark a failure pattern as resolved by a skill.
    * Sets `autoFixed: true` and records the fixing skill's ID.
    */
