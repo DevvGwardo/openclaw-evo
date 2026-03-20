@@ -238,23 +238,36 @@ function extractGatewayToolResult(messages: Record<string, unknown>[], sessionSt
  */
 function isContentFailure(content: string): boolean {
   if (!content) return false;
+
+  // Skip long content — tool results with substantial output are almost certainly successful
+  // (real errors are typically short messages)
+  if (content.length > 2000) return false;
+
+  // Skip JSON-wrapped gateway content arrays — these are successful tool responses
+  if (content.startsWith('[{"type":"text"')) return false;
+
   const lower = content.toLowerCase();
+
   // Command error signatures (cat:, ls:, grep:, curl:, etc. indicate CLI failure)
   if (/^(cat|ls|grep|curl|wget|node|python|bash):\s*.*/m.test(content)) return true;
-  // Shell error indicators
+
+  // Specific error patterns (not just the word "error" appearing anywhere)
   if (lower.includes('no such file') || lower.includes('cannot find') ||
       lower.includes('enoent') || lower.includes('not found') ||
-      lower.includes('connection refused') || lower.includes('couldn.t connect') ||
+      lower.includes('connection refused') || lower.includes('couldn\'t connect') ||
       lower.includes('permission denied') || lower.includes('operation not permitted') ||
-      lower.includes('invalid argument') || lower.includes('does not exist') ||
-      lower.includes('url rejected') || lower.includes('exit code 1') ||
-      lower.includes('exit code 2') || lower.includes('error') ||
-      lower.includes('failed')) return true;
-  // JSON error responses
+      lower.includes('does not exist') ||
+      lower.includes('url rejected')) return true;
+
+  // Exit code failures (but only as standalone indicators, not in prose)
+  if (/exit code [1-9]\d*/i.test(content) && content.length < 500) return true;
+
+  // JSON error responses (structured errors, not incidental "error" in text)
   try {
     const parsed = JSON.parse(content);
-    if (parsed?.status === 'error' || parsed?.error) return true;
+    if (parsed?.status === 'error' || (parsed?.error && typeof parsed.error === 'object')) return true;
   } catch { /* not JSON */ }
+
   return false;
 }
 
