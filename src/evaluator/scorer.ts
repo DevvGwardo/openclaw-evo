@@ -63,20 +63,20 @@ export function tuneWeights(
   // ── Reliability error rate ────────────────────────────────────────────────
   const sessionsWithErrors = historicalResults.filter((s) => s.errorCount > 0).length;
   const errorRate = sessionsWithErrors / historicalResults.length;
-  if (errorRate > 0.20) {
+  if (errorRate > 0.05) {
     weights.reliability = Math.min(WEIGHT_MAX, weights.reliability + 0.05);
     weights.speed       = Math.max(WEIGHT_MIN, weights.speed - 0.05);
   }
 
   // ── Coverage gaps ─────────────────────────────────────────────────────────
   const coverage = calcCoverage(historicalResults);
-  if (coverage < 60) {
+  if (coverage < 80) {
     weights.coverage = Math.min(WEIGHT_MAX, weights.coverage + 0.05);
   }
 
   // ── Low efficiency ────────────────────────────────────────────────────────
   const efficiency = calcEfficiency(historicalResults, DEFAULT_OPTIMAL_CALLS);
-  if (efficiency < 50) {
+  if (efficiency < 70) {
     weights.efficiency = Math.min(WEIGHT_MAX, weights.efficiency + 0.05);
   }
 
@@ -202,7 +202,7 @@ export function calcEfficiency(sessions: SessionMetrics[], optimalCalls: number)
   if (sessions.length === 0) return 0;
 
   const scores = sessions.map((s) => {
-    if (s.totalToolCalls === 0) return optimalCalls > 0 ? 100 : 100; // no calls = perfect (no waste)
+    if (s.totalToolCalls === 0) return 0; // no tool calls = no work accomplished
     // ratio > 1 means we used fewer calls than optimal (good)
     // ratio < 1 means we used more calls than optimal (bad)
     const ratio = optimalCalls / s.totalToolCalls;
@@ -222,6 +222,12 @@ export function calcSpeed(sessions: SessionMetrics[], baselineTimeMs: number): n
   if (sessions.length === 0) return 0;
 
   const scores = sessions.map((s) => {
+    // Prefer actual tool latency over wall-clock if available
+    if (s.avgLatencyMs > 0 && s.totalToolCalls > 0) {
+      const totalToolTime = s.avgLatencyMs * s.totalToolCalls;
+      return Math.min(100, (baselineTimeMs / totalToolTime) * 100);
+    }
+    // Fall back to wall-clock duration
     const duration = (s.endTime ?? Date.now()) - s.startTime;
     if (duration <= 0) return 100; // still running
     return Math.min(100, (baselineTimeMs / duration) * 100);

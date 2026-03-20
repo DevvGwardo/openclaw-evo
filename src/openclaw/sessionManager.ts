@@ -6,6 +6,7 @@
 
 import { Gateway, type OpenClawSession } from './gateway.js';
 import type { SessionMetrics, ToolCall } from '../types.js';
+import { extractToolCallsFromHistory, inferTaskType } from '../utils.js';
 
 export class SessionManager {
   private gateway: Gateway;
@@ -22,28 +23,23 @@ export class SessionManager {
 
   async getSessionMetrics(sessionKey: string): Promise<SessionMetrics> {
     const messages = await this.gateway.getSessionHistory(sessionKey, 50, true);
-    const toolCalls: ToolCall[] = [];
-    let errorCount = 0;
-    let totalLatency = 0;
-
-    for (const msg of messages) {
-      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-        const text = (msg.content as Array<{ type: string; text?: string }>)
-          .filter((c) => c.type === 'text')
-          .map((c) => c.text ?? '')
-          .join('');
-        if (text.includes('error') || text.includes('failed')) errorCount++;
-      }
-    }
+    const now = Date.now();
+    const toolCalls = extractToolCallsFromHistory(messages, now - 60000);
+    const failedCalls = toolCalls.filter((tc) => !tc.success).length;
+    const completedCalls = toolCalls.filter((tc) => tc.endTime != null);
+    const totalLatencyMs = completedCalls.reduce((sum, tc) => sum + (tc.endTime! - tc.startTime), 0);
+    const avgLatencyMs = completedCalls.length > 0 ? totalLatencyMs / completedCalls.length : 0;
+    const taskType = inferTaskType({}, messages);
 
     return {
       sessionId: sessionKey,
       toolCalls,
-      startTime: Date.now() - 60000,
-      success: errorCount === 0,
-      errorCount,
+      startTime: now - 60000,
+      success: failedCalls === 0 && toolCalls.length > 0,
+      errorCount: failedCalls,
       totalToolCalls: toolCalls.length,
-      avgLatencyMs: toolCalls.length > 0 ? totalLatency / toolCalls.length : 0,
+      avgLatencyMs,
+      taskType,
     };
   }
 
