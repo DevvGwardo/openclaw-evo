@@ -93,6 +93,18 @@ export class Gateway {
 
   async getSessionHistory(sessionKey: string, limit = 30, includeTools = true): Promise<Record<string, unknown>[]> {
     const resp = await this.request('sessions_history', { sessionKey, limit, includeTools });
+
+    // Gateway wraps response in { content: [{ type: "text", text: "JSON" }] }
+    const result = resp.result as { content?: { type: string; text: string }[] } | undefined;
+    const content = result?.content;
+    if (Array.isArray(content) && content.length > 0 && typeof content[0].text === 'string') {
+      const inner = JSON.parse(content[0].text);
+      // Response may be { messages: [...] } or a direct array
+      if (Array.isArray(inner)) return inner;
+      if (Array.isArray(inner?.messages)) return inner.messages;
+    }
+
+    // Fallback: try unwrapped formats
     const details = resp.result as Record<string, unknown> | undefined;
     if (Array.isArray(details)) return details;
     if (Array.isArray((details as Record<string, unknown>)?.messages)) {
