@@ -4,17 +4,20 @@
  * Can be started standalone or embedded in the CLI via startServer(hub).
  *
  * Endpoints:
- *   GET /api/status              → hub.getStatus()
- *   GET /api/skills              → hub.getProposedSkills()
- *   GET /api/experiments         → hub.getActiveExperiments()
- *   GET /api/cycles              → hub.getCompletedCycles()
- *   GET /api/metrics             → dashboard metrics from OpenClaw gateway
- *   GET /api/health              → { ok: true }
- *   GET /api/approvals/pending   → pending skill approvals
+ *   GET  /api/status              → hub.getStatus()
+ *   GET  /api/config              → hub.getConfig()
+ *   POST /api/restart             → restart the hub
+ *   GET  /api/skills              → hub.getProposedSkills()
+ *   GET  /api/experiments         → hub.getActiveExperiments()
+ *   GET  /api/cycles              → hub.getCompletedCycles()
+ *   GET  /api/metrics             → dashboard metrics from OpenClaw gateway
+ *   GET  /api/health              → { ok: true }
+ *   GET  /api/approvals/pending   → pending skill approvals
  *   POST /api/approvals/:id/approve
  *   POST /api/approvals/:id/reject
  *   POST /api/evolve              → trigger an evolution cycle
- *   GET /api/webhooks
+ *   POST /api/cycles/trigger      → alias for /api/evolve
+ *   GET  /api/webhooks
  *   POST /api/webhooks
  *   DELETE /api/webhooks/:id
  *
@@ -27,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EvoHub } from './hub.js';
+import { improvementLog } from './memory/improvementLog.js';
 import { promoter } from './experiment/promoter.js';
 import { DEFAULT_CONFIG } from './constants.js';
 
@@ -85,18 +89,27 @@ async function callWebhooks(event: WebhookEvent, data: unknown): Promise<void> {
 
 // ── Dashboard metrics from the OpenClaw gateway ───────────────────────────
 
-async function fetchGatewayMetrics(): Promise<unknown> {
-  const gatewayUrl = DEFAULT_CONFIG.OPENCLAW_GATEWAY_URL ?? 'http://localhost:18789';
-  try {
-    const res = await fetch(`${gatewayUrl}/api/dashboard/metrics`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return { error: `Gateway returned ${res.status}` };
-    return await res.json();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { error: `Gateway unreachable: ${message}` };
-  }
+async function fetchGatewayMetrics(hub: EvoHub): Promise<unknown> {
+  const status = await hub.getStatus();
+  const cycles = hub.getCompletedCycles();
+  const recentCycles = cycles.slice(-20);
+
+  return {
+    score: status.currentCycle?.phases?.evaluate?.overallScore ?? null,
+    totalCycles: status.totalCyclesRun,
+    activeExperiments: status.activeExperiments,
+    deployedSkills: status.deployedSkills,
+    knownFailurePatterns: status.knownFailurePatterns,
+    gatewayUp: status.gatewayWatchdog?.gatewayUp ?? false,
+    scoreHistory: recentCycles.map((c) => ({
+      cycle: c.cycleNumber,
+      score: c.phases?.evaluate?.overallScore ?? 0,
+      patterns: c.phases?.evaluate?.patternsFound ?? 0,
+      skills: c.phases?.build?.skillsProposed ?? 0,
+      experiments: c.phases?.experiment?.experimentsRun ?? 0,
+      ts: c.completedAt,
+    })),
+  };
 }
 
 // ── HTTP helpers ───────────────────────────────────────────────────────────
@@ -177,7 +190,21 @@ function createRouter(hub: EvoHub) {
       }
 
       if (url === '/api/status') {
-        jsonResponse(res, 200, hub.getStatus());
+        hub.getStatus().then((status) => jsonResponse(res, 200, status));
+        return;
+      }
+
+      // GET /api/config - return current hub configuration
+      if (url === '/api/config') {
+        jsonResponse(res, 200, { config: hub.getConfig(), version: '1.0.0' });
+        return;
+      }
+
+      // POST /api/restart - restart the hub
+      if (method === 'POST' && url === '/api/restart') {
+        hub.restart()
+          .then(() => jsonResponse(res, 200, { ok: true, message: 'Hub restarted' }))
+          .catch((err) => sendError(res, 500, err instanceof Error ? err.message : String(err)));
         return;
       }
 
@@ -196,16 +223,50 @@ function createRouter(hub: EvoHub) {
         return;
       }
 
-      // POST /api/evolve — trigger an evolution cycle on demand
-      if (method === 'POST' && url === '/api/evolve') {
-        hub.runEvolutionCycle()
-          .then(() => jsonResponse(res, 200, { ok: true, message: 'Evolution cycle completed' }))
-          .catch((err) => sendError(res, 500, err instanceof Error ? err.message : String(err)));
+      // GET /api/stats - performance stats from the improvement log
+      if (url === '/api/stats') {
+        void (async () => {
+          try {
+            const stats = await improvementLog.getStats();
+            jsonResponse(res, 200, stats);
+          } catch (err) {
+            sendError(res, 500, err instanceof Error ? err.message : String(err));
+          }
+        })();
+        return;
+      }
+
+      // GET /api/logs - recent cycle logs
+      if (url === '/api/logs') {
+        const cycles = hub.getCompletedCycles().slice(-20);
+        const logs = cycles.map((c) => ({
+          id: c.id,
+          cycleNumber: c.cycleNumber,
+          status: c.status,
+          startedAt: c.startedAt instanceof Date ? c.startedAt.toISOString() : c.startedAt,
+          completedAt: c.completedAt != null ? (c.completedAt instanceof Date ? c.completedAt.toISOString() : c.completedAt) : null,
+          phases: c.phases,
+        }));
+        jsonResponse(res, 200, logs);
+        return;
+      }
+
+      // POST /api/evolve - trigger an evolution cycle on demand
+      // POST /api/cycles/trigger - alias for /api/evolve
+      if (method === 'POST' && (url === '/api/evolve' || url === '/api/cycles/trigger')) {
+        void (async () => {
+          try {
+            const cycle = await hub.runEvolutionCycle();
+            jsonResponse(res, 200, { ok: true, cycle: cycle ?? null });
+          } catch (err) {
+            sendError(res, 500, err instanceof Error ? err.message : String(err));
+          }
+        })();
         return;
       }
 
       if (url === '/api/metrics') {
-        fetchGatewayMetrics()
+        fetchGatewayMetrics(hub)
           .then((metrics) => jsonResponse(res, 200, metrics))
           .catch((err) => sendError(res, 500, String(err)));
         return;
@@ -312,7 +373,7 @@ export function startServer(hub: EvoHub, port?: number): http.Server {
 
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
-      console.warn(`[server] Port ${p} in use — dashboard API not started`);
+      console.warn(`[server] Port ${p} in use - dashboard API not started`);
     } else {
       console.error('[server] Server error:', err);
     }
@@ -324,7 +385,7 @@ export function startServer(hub: EvoHub, port?: number): http.Server {
     if (hasDist) {
       console.log(`[server] Dashboard UI available at http://localhost:${p}`);
     } else {
-      console.log(`[server] Dashboard UI not built — run \`npm run build\` first`);
+      console.log(`[server] Dashboard UI not built - run \`npm run build\` first`);
     }
   });
 
