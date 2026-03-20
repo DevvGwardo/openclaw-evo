@@ -54,6 +54,7 @@ export class EvoHub {
   private cycleHistory: EvolutionCycle[] = [];
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private oneShot = false;
+  private cycleRunning = false;
 
   constructor(config: Partial<EvoConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -231,6 +232,12 @@ export class EvoHub {
 
   async runEvolutionCycle(): Promise<void> {
     if (!this.running) return;
+    if (this.cycleRunning) {
+      this.log('warn', 'Skipping cycle — previous cycle still running');
+      if (this.running) this.scheduleNextCycle(this.config.CYCLE_INTERVAL_MS);
+      return;
+    }
+    this.cycleRunning = true;
 
     this.cycleNumber++;
     const cycleStart = Date.now();
@@ -347,8 +354,8 @@ export class EvoHub {
       this.log('error', `Evaluation failed: ${err}`);
       this.currentCycle.status = 'failed';
       this.currentCycle.completedAt = new Date();
-      // Save failed cycle to history and continue
       this.cycleHistory.push({ ...this.currentCycle });
+      this.cycleRunning = false;
       if (this.running) this.scheduleNextCycle(this.config.CYCLE_INTERVAL_MS);
       return;
     }
@@ -444,6 +451,16 @@ export class EvoHub {
 
     // Save checkpoint after cycle completes
     await this.checkpoint();
+
+    // Clean up old experiments to prevent unbounded accumulation
+    if (this.activeExperiments.size > 50) {
+      const sorted = Array.from(this.activeExperiments.entries())
+        .sort((a, b) => (a[1].completedAt?.getTime() ?? 0) - (b[1].completedAt?.getTime() ?? 0));
+      const toRemove = sorted.slice(0, sorted.length - 50);
+      for (const [id] of toRemove) this.activeExperiments.delete(id);
+    }
+
+    this.cycleRunning = false;
 
     if (this.running) {
       this.scheduleNextCycle(this.config.CYCLE_INTERVAL_MS);
