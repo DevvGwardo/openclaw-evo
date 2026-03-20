@@ -399,7 +399,7 @@ export class EvoHub {
     for (const skill of newSkills) {
       try {
         const experiment = experimentRunner.createExperiment(skill);
-        const completed = await experimentRunner.run(experiment);
+        const completed = await experimentRunner.run(experiment, this.recentMetrics);
         this.activeExperiments.set(completed.id, completed);
         experimentsRun++;
 
