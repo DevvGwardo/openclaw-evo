@@ -238,20 +238,26 @@ function extractGatewayToolResult(messages: Record<string, unknown>[], sessionSt
  */
 function isContentFailure(content: string): boolean {
   if (!content) return false;
-
-  // Skip long content — tool results with substantial output are almost certainly successful
-  // (real errors are typically short messages)
   if (content.length > 2000) return false;
 
-  // Skip JSON-wrapped gateway content arrays — these are successful tool responses
-  if (content.startsWith('[{"type":"text"')) return false;
+  // Handle JSON-wrapped gateway content arrays: [{type:"text", text:"..."}]
+  // Extract the inner text so we can check the actual command output
+  let innerText = content;
+  if (content.startsWith('[{"type":"text"') || content.startsWith('[{ "type": "text"')) {
+    try {
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed) && parsed[0]?.text) {
+        innerText = parsed[0].text as string;
+      }
+    } catch { /* fall through with original content */ }
+  }
 
-  const lower = content.toLowerCase();
+  const lower = innerText.toLowerCase();
 
-  // Command error signatures (cat:, ls:, grep:, curl:, etc. indicate CLI failure)
-  if (/^(cat|ls|grep|curl|wget|node|python|bash):\s*.*/m.test(content)) return true;
+  // Command error signatures (cat:, ls:, grep:, curl:, etc.) anywhere in the output
+  if (/^(cat|ls|grep|curl|wget|node|python|bash):\s*.*/m.test(innerText)) return true;
 
-  // Specific error patterns (not just the word "error" appearing anywhere)
+  // Specific error patterns
   if (lower.includes('no such file') || lower.includes('cannot find') ||
       lower.includes('enoent') || lower.includes('not found') ||
       lower.includes('connection refused') || lower.includes('couldn\'t connect') ||
@@ -259,12 +265,12 @@ function isContentFailure(content: string): boolean {
       lower.includes('does not exist') ||
       lower.includes('url rejected')) return true;
 
-  // Exit code failures (but only as standalone indicators, not in prose)
-  if (/exit code [1-9]\d*/i.test(content) && content.length < 500) return true;
+  // Exit code failures in compact output
+  if (/exit code [1-9]\d*/i.test(innerText) && innerText.length < 500) return true;
 
-  // JSON error responses (structured errors, not incidental "error" in text)
+  // JSON error responses (structured errors)
   try {
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(innerText);
     if (parsed?.status === 'error' || (parsed?.error && typeof parsed.error === 'object')) return true;
   } catch { /* not JSON */ }
 
