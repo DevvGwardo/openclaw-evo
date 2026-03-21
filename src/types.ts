@@ -81,6 +81,8 @@ export interface GeneratedSkill {
   examples: SkillExample[];
   confidence: number;       // 0-1
   targetFailurePattern?: string;
+  /** Frequency of the failure pattern at time of skill generation (for frequency fallback in promoter) */
+  patternFrequency?: number;
   generatedAt: Date;
   status: 'proposed' | 'testing' | 'deployed' | 'rejected' | 'superseded' | 'pending_approval';
   proposedAtCycle?: number;

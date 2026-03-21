@@ -102,8 +102,17 @@ function collectFailures(sessions: SessionMetrics[]): FailureEntry[] {
 function groupKey(tc: ToolCall): string {
   const toolName = tc.name ?? 'unknown';
   const errorType = inferErrorType(tc.error);
-  const msgPrefix = (tc.error ?? '').slice(0, ERROR_MSG_PREFIX_LEN).trim();
-  return `${toolName}::${errorType}::${msgPrefix}`;
+  const msgPrefix = (tc.error ?? '').trim();
+
+  // For CLI command errors, drop the path-varying suffix — group all instances
+  // of "cat:" failures together regardless of which file was missing, etc.
+  const cliMatch = /^(cat|ls|grep|curl|wget|node|python|bash|chmod|mv|rm|echo):\s*/.exec(msgPrefix);
+  if (cliMatch) {
+    // Group all CLI errors of the same command together (no msgPrefix)
+    return `${toolName}::${errorType}::CLI`;
+  }
+
+  return `${toolName}::${errorType}::${msgPrefix.slice(0, ERROR_MSG_PREFIX_LEN)}`;
 }
 
 function groupByKey(entries: FailureEntry[]): Record<string, FailureEntry[]> {

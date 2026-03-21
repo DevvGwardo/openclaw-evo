@@ -31,6 +31,7 @@ import { spawn, execSync } from 'child_process';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const isOnceMode = process.argv.includes('--once');
+const isCronMode = process.argv.includes('--cron'); // one-shot but saves checkpoint (for cron jobs)
 const isWatchMode = process.argv.includes('--watch');
 const isTestFailures = process.argv.includes('--test-failures');
 
@@ -461,14 +462,14 @@ async function main(): Promise<void> {
     buildDashboard();
   }
 
-  if (isOnceMode || isTestFailures) {
+  if (isOnceMode || isCronMode || isTestFailures) {
     const hub = new EvoHub(DEFAULT_CONFIG);
     try {
       if (isTestFailures) {
         console.log(chalk.yellow('\n🧪 Test mode: injecting synthetic tool failures...\n'));
         hub.injectTestFailures();
       }
-      await hub.runOnce();
+      await hub.runOnce({ saveCheckpoint: isCronMode });
       console.log(chalk.green('✅ Evolution cycle complete.'));
       hub.stop();
       process.exit(0);

@@ -176,6 +176,8 @@ export class EvoHub {
    * Called after each evolution cycle completes.
    */
   async checkpoint(): Promise<void> {
+    // oneShot=true for --once mode (skip checkpoint to avoid stomping daemon state)
+    // oneShot=false for --cron mode (save checkpoint between cron invocations)
     if (this.oneShot) {
       this.log('info', chalk.gray('  ⏭️  Skipping checkpoint (one-shot mode)'));
       return;
@@ -361,14 +363,8 @@ export class EvoHub {
       // Detect patterns from live session data (not just the persisted corpus)
       const livePatterns = detectPatterns(recentSessions, this.config.FAILURE_THRESHOLD);
 
-      // Record newly detected patterns into the failure corpus for accumulation
-      for (const pattern of livePatterns) {
-        const context = pattern.exampleContexts[0] ?? {
-          sessionId: 'unknown', taskDescription: 'unknown',
-          toolInput: {}, errorOutput: pattern.errorMessage, timestamp: new Date(),
-        };
-        await failureCorpus.recordFailure(pattern, context);
-      }
+      // NOTE: recording to corpus is done ONLY in the cycle evaluate phase (cycle.ts).
+      // The monitor runs continuously and would create duplicate corpus entries if it also recorded.
 
       // Merge persisted corpus patterns with live-detected ones
       const corpusPatterns = await failureCorpus.getPatterns(this.config.FAILURE_THRESHOLD);
@@ -396,17 +392,24 @@ export class EvoHub {
     const newSkills: GeneratedSkill[] = [];
     const failurePatterns = await failureCorpus.getPatterns(this.config.FAILURE_THRESHOLD);
 
-    // Skip patterns that already have a skill (active or recently rejected)
-    const activeSkillPatterns = new Set(
-      this.proposedSkills
-        .map((s) => s.name.split('—')[0].trim().toLowerCase()),
+    // Skip patterns whose (toolName, errorType) already has a proposed/deployed skill.
+    // Key by "toolName/errorType" — stable across corpus rebuilds (unlike pattern ID).
+    const activePatternKeys = new Set(
+      this.proposedSkills.map((s) => {
+        // Skill name format: "${toolName} — ${errorType} Skill"
+        const parts = s.name.split('—').map((p) => p.trim());
+        return parts.length >= 2
+          ? `${parts[0].toLowerCase()}/${parts[1].replace(' Skill', '').toLowerCase()}`
+          : s.name.toLowerCase();
+      }),
     );
 
     // Deduplicate: skip patterns whose skill is already deployed
     const deployedSkillNames = getDeployedSkillNames(this.config.SKILL_OUTPUT_DIR);
 
     for (const pattern of failurePatterns.slice(0, this.config.MAX_SKILLS_PER_CYCLE)) {
-      if (activeSkillPatterns.has(pattern.toolName.toLowerCase())) {
+      const patternKey = `${pattern.toolName.toLowerCase()}/${pattern.errorType.toLowerCase()}`;
+      if (activePatternKeys.has(patternKey)) {
         this.log('info', chalk.gray(`  ⏩ Skipping ${pattern.toolName}/${pattern.errorType} — skill already proposed`));
         continue;
       }
@@ -420,6 +423,7 @@ export class EvoHub {
           }
           const validation = validate(result.skill);
           if (validation.valid) {
+            result.skill.patternFrequency = pattern.frequency;
             result.skill.status = 'proposed';
             result.skill.proposedAtCycle = this.cycleNumber;
             newSkills.push(result.skill);
@@ -459,6 +463,7 @@ export class EvoHub {
         completed.improvementPct = result.improvementPct;
 
         promoter.register(completed);
+        promoter.registerSkill(skill);
         const decision = promoter.evaluate(completed);
         if (decision.promoted) {
           const promoteResult = await promoter.promote(completed.id);
@@ -624,9 +629,10 @@ export class EvoHub {
 
   // ── CLI trigger ────────────────────────────────────────────────────────────
 
-  async runOnce(): Promise<void> {
-    // One-shot mode: don't write checkpoints (avoids stomping the daemon's state)
-    this.oneShot = true;
+  async runOnce(opts: { saveCheckpoint?: boolean } = {}): Promise<void> {
+    // saveCheckpoint=true for cron jobs (one-shot but checkpoint between runs)
+    // saveCheckpoint=false for interactive --once (avoids stomping daemon state)
+    this.oneShot = !opts.saveCheckpoint;
 
     // Wait for any in-progress resume() from constructor to finish
     // so we don't race on this.running = false

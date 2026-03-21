@@ -174,12 +174,12 @@ function extractGatewayToolResult(messages: Record<string, unknown>[], sessionSt
           const content = result?.content != null
             ? typeof result.content === 'string' ? result.content as string : JSON.stringify(result.content)
             : '';
+          const innerText = extractInnerText(content);
           const hasError = result?.isError === true || isContentFailure(content);
 
-          const errorStr = hasError && result?.content != null
-            ? typeof result.content === 'string'
-              ? result.content as string
-              : JSON.stringify(result.content)
+          // Use extracted inner text as error string (not raw JSON) so groupKey is meaningful
+          const errorStr = (hasError && result?.content != null)
+            ? innerText.slice(0, 500)
             : undefined;
 
           const startTime = result?.timestamp ?? (sessionStartTime + callIndex * 1000);
@@ -210,9 +210,10 @@ function extractGatewayToolResult(messages: Record<string, unknown>[], sessionSt
       const content = r.content != null
         ? typeof r.content === 'string' ? r.content as string : JSON.stringify(r.content)
         : '';
+      const innerText = extractInnerText(content);
       const hasError = r.isError || isContentFailure(content);
-      const errorStr = hasError && r.content != null
-        ? typeof r.content === 'string' ? r.content as string : JSON.stringify(r.content)
+      const errorStr = (hasError && r.content != null)
+        ? innerText.slice(0, 500)
         : undefined;
 
       toolCalls.push({
@@ -236,21 +237,31 @@ function extractGatewayToolResult(messages: Record<string, unknown>[], sessionSt
  * The gateway sets isError=False for non-zero exit codes from exec/bash commands,
  * so we scan the output for common error signatures.
  */
+/**
+ * Extract the inner text from gateway JSON-wrapped content arrays.
+ * Gateway returns tool results as [{type:"text", text:"actual output"}].
+ * Returns the original string if not wrapped.
+ */
+function extractInnerText(content: string): string {
+  if (!content) return content;
+  // Fast path: check for common gateway JSON array prefixes
+  if ((content.startsWith('[{"type":"text"') || content.startsWith('[{ "type": "text"')) && content.length < 10000) {
+    try {
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed) && parsed[0]?.text && typeof parsed[0].text === 'string') {
+        return parsed[0].text as string;
+      }
+    } catch { /* fall through */ }
+  }
+  return content;
+}
+
 function isContentFailure(content: string): boolean {
   if (!content) return false;
   if (content.length > 2000) return false;
 
   // Handle JSON-wrapped gateway content arrays: [{type:"text", text:"..."}]
-  // Extract the inner text so we can check the actual command output
-  let innerText = content;
-  if (content.startsWith('[{"type":"text"') || content.startsWith('[{ "type": "text"')) {
-    try {
-      const parsed = JSON.parse(content);
-      if (Array.isArray(parsed) && parsed[0]?.text) {
-        innerText = parsed[0].text as string;
-      }
-    } catch { /* fall through with original content */ }
-  }
+  const innerText = extractInnerText(content);
 
   const lower = innerText.toLowerCase();
 
@@ -304,11 +315,23 @@ function extractAnthropic(messages: Record<string, unknown>[], sessionStartTime:
           const id = typeof block.id === 'string' ? block.id : `tool-${callIndex}`;
           const result = resultMap.get(id);
           const hasError = result?.isError === true;
-          const errorStr = hasError && result?.content != null
-            ? typeof result.content === 'string'
+
+          // Build errorStr: extract inner text from gateway JSON arrays even when isError=false
+          let errorStr: string | undefined;
+          if (hasError && result?.content != null) {
+            errorStr = typeof result.content === 'string'
               ? result.content
-              : JSON.stringify(result.content)
-            : undefined;
+              : JSON.stringify(result.content);
+          } else if (result?.content != null) {
+            const contentStr = typeof result.content === 'string'
+              ? result.content
+              : JSON.stringify(result.content);
+            const innerText = extractInnerText(contentStr);
+            // Detect CLI failure even when gateway says isError=false
+            if (/^(cat|ls|grep|curl|wget|node|python|bash):\s*.*/m.test(innerText)) {
+              errorStr = innerText.slice(0, 500);
+            }
+          }
 
           const startTime = sessionStartTime + callIndex * 1000;
           const endTime = result != null ? startTime + 500 : undefined;
@@ -317,11 +340,11 @@ function extractAnthropic(messages: Record<string, unknown>[], sessionStartTime:
             id,
             name: (block.name as string) ?? 'unknown',
             input: (block.input as Record<string, unknown>) ?? {},
-            output: hasError ? undefined : result?.content,
+            output: hasError || errorStr !== undefined ? undefined : result?.content,
             error: errorStr,
             startTime,
             endTime,
-            success: result != null ? !hasError : false,
+            success: result != null ? (!hasError && errorStr === undefined) : false,
           });
           callIndex++;
         }
@@ -362,9 +385,19 @@ function extractOpenAI(messages: Record<string, unknown>[], sessionStartTime: nu
 
         const result = resultMap.get(id);
         const hasError = result?.isError === true;
-        const errorStr = hasError && result?.content != null
-          ? typeof result.content === 'string' ? result.content : JSON.stringify(result.content)
-          : undefined;
+
+        let errorStr: string | undefined;
+        if (hasError && result?.content != null) {
+          errorStr = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+        } else if (result?.content != null) {
+          const contentStr = typeof result.content === 'string'
+            ? result.content
+            : JSON.stringify(result.content);
+          const innerText = extractInnerText(contentStr);
+          if (/^(cat|ls|grep|curl|wget|node|python|bash):\s*.*/m.test(innerText)) {
+            errorStr = innerText.slice(0, 500);
+          }
+        }
 
         const startTime = sessionStartTime + callIndex * 1000;
         const endTime = result != null ? startTime + 500 : undefined;
@@ -373,11 +406,11 @@ function extractOpenAI(messages: Record<string, unknown>[], sessionStartTime: nu
           id,
           name,
           input,
-          output: hasError ? undefined : result?.content,
+          output: hasError || errorStr !== undefined ? undefined : result?.content,
           error: errorStr,
           startTime,
           endTime,
-          success: result != null ? !hasError : true,
+          success: result != null ? (!hasError && errorStr === undefined) : true,
         });
         callIndex++;
       }
@@ -397,9 +430,24 @@ function extractFromMetadata(messages: Record<string, unknown>[], sessionStartTi
     const toolName = (msg.toolName ?? msg.tool_name ?? msg.name) as string | undefined;
     if (toolName && msg.role !== 'user' && msg.role !== 'system') {
       const isError = msg.error != null || msg.is_error === true;
-      const errorStr = isError
-        ? typeof msg.error === 'string' ? msg.error : JSON.stringify(msg.error)
-        : undefined;
+
+      // Extract inner text from gateway JSON-wrapped content for error detection
+      let errorStr: string | undefined;
+      if (isError) {
+        errorStr = typeof msg.error === 'string' ? msg.error : JSON.stringify(msg.error);
+      } else {
+        // Check content for CLI failure signatures even when isError=false
+        const content = Array.isArray(msg.content)
+          ? JSON.stringify(msg.content)
+          : (typeof msg.content === 'string' ? msg.content : undefined);
+        if (content) {
+          const innerText = extractInnerText(content);
+          // If the inner text looks like a CLI error, treat it as one
+          if (/^(cat|ls|grep|curl|wget|node|python|bash):\s*.*/m.test(innerText)) {
+            errorStr = innerText.slice(0, 500);
+          }
+        }
+      }
 
       const startTime = sessionStartTime + callIndex * 1000;
       toolCalls.push({
@@ -410,7 +458,7 @@ function extractFromMetadata(messages: Record<string, unknown>[], sessionStartTi
         error: errorStr,
         startTime,
         endTime: startTime + 500,
-        success: !isError,
+        success: !isError && errorStr === undefined,
       });
       callIndex++;
     }

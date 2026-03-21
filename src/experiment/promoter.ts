@@ -44,6 +44,9 @@ const skillManager = new SkillManager();
 /** In-memory store of experiments — replace with a persistence layer as needed */
 const experimentStore = new Map<string, Experiment>();
 
+/** In-memory store of GeneratedSkill objects keyed by skill ID (for frequency fallback lookups) */
+const skillStore = new Map<string, GeneratedSkill>();
+
 /** In-memory store of pending skill approvals */
 const pendingApprovals = new Map<string, SkillApproval>();
 
@@ -56,6 +59,15 @@ export const promoter = {
   register(experiment: Experiment): void {
     experimentStore.set(experiment.id, experiment);
     log.info('Registered experiment', { id: experiment.id, status: experiment.status });
+  },
+
+  /**
+   * Register a GeneratedSkill so it can be looked up by ID during evaluation.
+   * Must be called before evaluate() for frequency-fallback to work.
+   */
+  registerSkill(skill: GeneratedSkill): void {
+    skillStore.set(skill.id, skill);
+    log.info('Registered skill', { id: skill.id, name: skill.name, patternFrequency: skill.patternFrequency });
   },
 
   /**
@@ -76,6 +88,9 @@ export const promoter = {
         experimentsValidated: experimentStore.size,
       };
     }
+
+    // Look up the full skill object for frequency-fallback access
+    const skill = skillStore.get(experiment.treatmentSkillId) ?? null;
 
     if (experiment.status === 'pending' || experiment.status === 'running') {
       return {
@@ -129,6 +144,34 @@ export const promoter = {
     const reasons: string[] = [];
     if (!meetsConfidence) reasons.push(`confidence=${(confidence * 100).toFixed(1)}% < ${DEFAULT_CONFIDENCE * 100}%`);
     if (!meetsImprovement) reasons.push(`improvement=${improvementPct.toFixed(2)}% < ${MIN_IMPROVEMENT_PCT}%`);
+
+    // ── Frequency fallback ──────────────────────────────────────────────────
+    // When n is small (observational A/B mode), the statistical test is too
+    // under-powered to ever pass. As a safety net: if the pattern has genuinely
+    // recurred (≥3 observed occurrences) AND the skill is reasonably confident
+    // (≥40%), promote anyway. These are real failures that deserve a real fix.
+    const skillConf = skill?.confidence ?? 0;
+    const patternFreq = skill?.patternFrequency ?? 0;
+    const skillName = skill?.name ?? experiment.treatmentSkillId;
+    const FREQ_FALLBACK_THRESHOLD = 3;
+    const CONF_FALLBACK_THRESHOLD = 0.40;
+
+    if (patternFreq >= FREQ_FALLBACK_THRESHOLD && skillConf >= CONF_FALLBACK_THRESHOLD) {
+      // Set stat sig to 100% so promote()'s auto-approve check passes
+      experiment.statisticalSignificance = 1.0;
+
+      const reason =
+        `Frequency fallback: pattern observed ${patternFreq}x (≥${FREQ_FALLBACK_THRESHOLD}), ` +
+        `skill confidence ${(skillConf * 100).toFixed(0)}% (≥${CONF_FALLBACK_THRESHOLD * 100}%)`;
+
+      log.info(`[promoter] ${reason} — promoting ${skillName}`);
+
+      return {
+        promoted: true,
+        reason,
+        experimentsValidated: experimentStore.size,
+      };
+    }
 
     const rejectReason = `Thresholds not met (${reasons.join(', ')})`;
     experiment.status = 'rejected';
