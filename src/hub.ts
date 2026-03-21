@@ -249,6 +249,8 @@ export class EvoHub {
   scheduleNextCycle(intervalMs: number): void {
     if (!this.running) return;
     this.cycleTimer = setTimeout(() => {
+      // Skip scheduled cycles in one-shot/cron mode — only the CLI-triggered cycle should run
+      if (this.oneShot) return;
       void this.runEvolutionCycle();
     }, intervalMs);
   }
@@ -363,8 +365,18 @@ export class EvoHub {
       // Detect patterns from live session data (not just the persisted corpus)
       const livePatterns = detectPatterns(recentSessions, this.config.FAILURE_THRESHOLD);
 
-      // NOTE: recording to corpus is done ONLY in the cycle evaluate phase (cycle.ts).
-      // The monitor runs continuously and would create duplicate corpus entries if it also recorded.
+      // Persist newly detected patterns to the failure corpus for accumulation
+      // (this is the only place that records in hub-only mode; cycle.ts does it for daemon mode)
+      for (const pattern of livePatterns) {
+        const ctx = pattern.exampleContexts[0] ?? {
+          sessionId: recentSessions[0]?.sessionId ?? 'unknown',
+          taskDescription: recentSessions[0]?.taskType ?? 'unknown',
+          toolInput: {},
+          errorOutput: pattern.errorMessage,
+          timestamp: new Date(),
+        };
+        await failureCorpus.recordFailure(pattern, ctx);
+      }
 
       // Merge persisted corpus patterns with live-detected ones
       const corpusPatterns = await failureCorpus.getPatterns(this.config.FAILURE_THRESHOLD);
@@ -391,7 +403,6 @@ export class EvoHub {
     const buildStart = Date.now();
     const newSkills: GeneratedSkill[] = [];
     const failurePatterns = await failureCorpus.getPatterns(this.config.FAILURE_THRESHOLD);
-
     // Skip patterns whose (toolName, errorType) already has a proposed/deployed skill.
     // Key by "toolName/errorType" — stable across corpus rebuilds (unlike pattern ID).
     const activePatternKeys = new Set(
@@ -407,10 +418,26 @@ export class EvoHub {
     // Deduplicate: skip patterns whose skill is already deployed
     const deployedSkillNames = getDeployedSkillNames(this.config.SKILL_OUTPUT_DIR);
 
-    for (const pattern of failurePatterns.slice(0, this.config.MAX_SKILLS_PER_CYCLE)) {
+    // Filter out already-skipped patterns BEFORE slicing to MAX_SKILLS_PER_CYCLE,
+    // so they don't consume slots and block other actionable patterns.
+    const actionablePatterns = failurePatterns.filter(
+      (p) => !activePatternKeys.has(`${p.toolName.toLowerCase()}/${p.errorType.toLowerCase()}`),
+    );
+// Deduplicate by toolName/errorType to prevent duplicate corpus entries
+    // from consuming MAX_SKILLS_PER_CYCLE slots.
+    const seenPatternKeys = new Set<string>();
+    const uniquePatterns: typeof actionablePatterns = [];
+    for (const p of actionablePatterns) {
+      const key = `${p.toolName.toLowerCase()}/${p.errorType.toLowerCase()}`;
+      if (!seenPatternKeys.has(key)) {
+        seenPatternKeys.add(key);
+        uniquePatterns.push(p);
+      }
+    }
+
+    for (const pattern of uniquePatterns.slice(0, this.config.MAX_SKILLS_PER_CYCLE)) {
       const patternKey = `${pattern.toolName.toLowerCase()}/${pattern.errorType.toLowerCase()}`;
       if (activePatternKeys.has(patternKey)) {
-        this.log('info', chalk.gray(`  ⏩ Skipping ${pattern.toolName}/${pattern.errorType} — skill already proposed`));
         continue;
       }
       try {
@@ -422,12 +449,14 @@ export class EvoHub {
             continue;
           }
           const validation = validate(result.skill);
+
           if (validation.valid) {
             result.skill.patternFrequency = pattern.frequency;
             result.skill.status = 'proposed';
             result.skill.proposedAtCycle = this.cycleNumber;
             newSkills.push(result.skill);
             this.proposedSkills.push(result.skill);
+
             await improvementLog.record({
               timestamp: new Date(),
               type: 'skill_created',
