@@ -15,11 +15,13 @@ function emptyCorpus(): FailureCorpus {
   return { failures: [], lastUpdated: new Date() };
 }
 
-/** Normalize a string key for pattern de-duplication. */
+/** Normalize a string key for pattern de-duplication.
+ * Groups ALL failures of the same tool+errorType together regardless of
+ * the specific error message (different paths/variable text create separate
+ * entries if we include the message prefix, fragmenting the corpus).
+ */
 function patternKey(pattern: Pick<FailurePattern, 'toolName' | 'errorType' | 'errorMessage'>): string {
-  return [pattern.toolName, pattern.errorType, pattern.errorMessage]
-    .join('|')
-    .toLowerCase();
+  return `${pattern.toolName}|${pattern.errorType}`.toLowerCase();
 }
 
 /** Find an existing record matching the given pattern, or null. */
