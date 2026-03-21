@@ -19,20 +19,18 @@ import { scorePerTool } from './evaluator/reportGenerator.js';
 import { analyze } from './evaluator/reportGenerator.js';
 import { generateFromFailure } from './builder/skillGenerator.js';
 import { validate } from './builder/skillValidator.js';
-import { TEMPLATE_LIBRARY } from './builder/templateLibrary.js';
+
 import { experimentRunner } from './experiment/runner.js';
 import { comparator } from './experiment/comparator.js';
 import { promoter } from './experiment/promoter.js';
 import { MemoryStore } from './memory/store.js';
 import { failureCorpus } from './memory/failureCorpus.js';
 import { improvementLog } from './memory/improvementLog.js';
-import { SkillManager } from './openclaw/skillManager.js';
 import { GatewayWatchdog } from './watchdog.js';
 import type {
   EvoConfig,
   EvolutionCycle,
   SessionMetrics,
-  FailurePattern,
   GeneratedSkill,
   Experiment,
   HubStatus,
@@ -577,7 +575,7 @@ export class EvoHub {
   // ── Status ────────────────────────────────────────────────────────────────
 
   async getStatus(): Promise<HubStatus> {
-    const [stats, patterns] = await Promise.all([
+    const [, patterns] = await Promise.all([
       improvementLog.getStats(),
       failureCorpus.getPatterns(0),
     ]);

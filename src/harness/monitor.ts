@@ -12,8 +12,8 @@ import type {
 } from '../types.js';
 import { getHarnessConfig } from './toolAnalyzer.js';
 
-export type HarnessListener = (event: HarnessEvent) => void;
-export type OpenClawEventHook = (data: unknown) => void;
+export type HarnessListener = (_event: HarnessEvent) => void;
+export type OpenClawEventHook = (_data: unknown) => void;
 
 interface MonitorConfig {
   gatewayUrl: string;
@@ -480,7 +480,7 @@ export class HarnessMonitor {
 }
 
 /** Minimal shape of events returned by the OpenClaw gateway */
-interface RawGatewayEvent {
+interface _RawGatewayEvent {
   type: string;
   sessionId?: string;
   data?: unknown;

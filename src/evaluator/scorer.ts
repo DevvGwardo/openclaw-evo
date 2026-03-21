@@ -54,7 +54,7 @@ export async function saveWeights(weights: AdaptiveWeights): Promise<void> {
  */
 export function tuneWeights(
   historicalResults: SessionMetrics[],
-  patterns: FailurePattern[],
+  _patterns: FailurePattern[],
 ): AdaptiveWeights {
   const weights: AdaptiveWeights = { ...DEFAULT_WEIGHTS };
 
@@ -118,7 +118,7 @@ export async function adaptiveScoreSessions(
   baselineTimeMs = DEFAULT_BASELINE_TIME_MS,
   optimalCalls = DEFAULT_OPTIMAL_CALLS,
 ): Promise<PerformanceScore> {
-  const currentWeights = await getWeights();
+  const _currentWeights = await getWeights();
   const tunedWeights = tuneWeights(sessions, patterns);
   await saveWeights(tunedWeights);
 

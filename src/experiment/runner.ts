@@ -23,8 +23,7 @@ import { extractToolCallsFromHistory, inferTaskType } from '../utils.js';
 
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL ?? 'http://localhost:18789';
 const EXPERIMENT_SESSIONS = parseInt(process.env.EXPERIMENT_SESSIONS ?? '10', 10);
-const OBSERVATION_WINDOW_MS = parseInt(process.env.OBSERVATION_WINDOW_MS ?? '300000', 10); // 5 min default
-const OBSERVATION_POLL_MS = parseInt(process.env.OBSERVATION_POLL_MS ?? '30000', 10); // poll every 30s
+
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -232,7 +231,6 @@ function runFromMetrics(experiment: Experiment, metrics: SessionMetrics[]): void
   // ── Control arm: actual performance of the targeted tool ─────────────
   const controlResults: ExperimentResult[] = [];
   const treatmentResults: ExperimentResult[] = [];
-  let sessionIndex = 0;
 
   for (const session of metrics) {
     // Find tool calls matching the target tool
@@ -274,7 +272,7 @@ function runFromMetrics(experiment: Experiment, metrics: SessionMetrics[]): void
       });
     }
 
-    sessionIndex++;
+
   }
 
   // If no relevant tool calls found, use session-level success rates

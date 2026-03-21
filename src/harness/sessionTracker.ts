@@ -38,7 +38,7 @@ export class SessionTracker {
 
   // Subscribers notified when a session completes
   private readonly completionListeners = Array<
-    (metrics: SessionMetrics, session: SessionLifecycle) => void
+    (_metrics: SessionMetrics, _session: SessionLifecycle) => void
   >();
 
   constructor() {
@@ -78,7 +78,7 @@ export class SessionTracker {
    * Register a callback fired when a session completes with its final metrics.
    */
   onSessionComplete(
-    listener: (metrics: SessionMetrics, session: SessionLifecycle) => void
+    listener: (_metrics: SessionMetrics, _session: SessionLifecycle) => void
   ): void {
     this.completionListeners.push(listener);
   }
@@ -300,7 +300,7 @@ export class SessionTracker {
 
     const totalToolCalls = toolLifecycles.length;
     const errorCount = toolLifecycles.filter((t) => !t.success).length;
-    const successfulCalls = toolLifecycles.filter((t) => t.success);
+    const _successfulCalls = toolLifecycles.filter((t) => t.success);
 
     const completedCalls = toolLifecycles.filter((t) => t.endTime);
     const totalLatencyMs = completedCalls.reduce((sum, t) => {

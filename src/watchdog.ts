@@ -68,7 +68,7 @@ export type WatchdogEvent =
   | { type: 'max_restarts';    total: number }
   | { type: 'stopped' };
 
-export type WatchdogListener = (event: WatchdogEvent) => void;
+export type WatchdogListener = (_event: WatchdogEvent) => void;
 
 // ── Watchdog ────────────────────────────────────────────────────────────────
 

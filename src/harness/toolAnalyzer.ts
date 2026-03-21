@@ -199,7 +199,7 @@ export class ToolAnalyzer {
 
     const patterns: FailurePattern[] = [];
 
-    for (const [key, group] of groups) {
+    for (const [, group] of groups) {
       if (group.occurrences.length < this.config.minSampleSize) continue;
 
       const severity = this.inferSeverity(group);
