@@ -288,7 +288,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_PATH_LEN  = 4096;
 
 const DANGEROUS_PATTERNS: RegExp[] = [
-  /\\.\\.(\\\/|$)/,           // path traversal
+  /\\.\\.(\\/|$)/,           // path traversal
   /^\\/(etc|proc|sys|dev)/,  // system directories
   /^\\\\windows\\\\system32/i,
 ];
