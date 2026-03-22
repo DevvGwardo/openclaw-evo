@@ -23,6 +23,9 @@ import { validate } from './builder/skillValidator.js';
 import { experimentRunner } from './experiment/runner.js';
 import { comparator } from './experiment/comparator.js';
 import { promoter } from './experiment/promoter.js';
+import { experimentLog } from './experiment/experimentLog.js';
+import { frontier } from './experiment/frontier.js';
+import { gitTracker } from './experiment/gitTracker.js';
 import { MemoryStore } from './memory/store.js';
 import { failureCorpus } from './memory/failureCorpus.js';
 import { improvementLog } from './memory/improvementLog.js';
@@ -479,8 +482,15 @@ export class EvoHub {
     let experimentsRun = 0;
 
     for (const skill of newSkills) {
+      // ── Git: create experiment branch ──────────────────────────────────
+      let gitBranch: string | null = null;
       try {
         const experiment = experimentRunner.createExperiment(skill);
+        gitBranch = gitTracker.createBranch(experiment.id);
+        if (gitBranch) {
+          gitTracker.commitSkill(gitBranch, skill, experiment);
+        }
+
         const completed = await experimentRunner.run(experiment, this.recentMetrics);
         this.activeExperiments.set(completed.id, completed);
         experimentsRun++;
@@ -488,6 +498,14 @@ export class EvoHub {
         const result = comparator.compare(completed);
         completed.statisticalSignificance = result.confidence;
         completed.improvementPct = result.improvementPct;
+
+        // Compute success rates for TSV log
+        const controlRate = completed.controlResults.length > 0
+          ? completed.controlResults.filter((r) => r.success).length / completed.controlResults.length
+          : 0;
+        const treatmentRate = completed.treatmentResults.length > 0
+          ? completed.treatmentResults.filter((r) => r.success).length / completed.treatmentResults.length
+          : 0;
 
         promoter.register(completed);
         promoter.registerSkill(skill);
@@ -497,15 +515,76 @@ export class EvoHub {
           if (promoteResult.promoted) {
             this.currentCycle.phases.integrate.improvementsDeployed++;
             this.log('info', chalk.greenBright(`  🚀 Promoted: ${skill.name} (+${result.improvementPct.toFixed(1)}%)`));
+
+            // ── Log: kept ──────────────────────────────────────────────
+            experimentLog.record({
+              experimentId: completed.id,
+              skillName: skill.name,
+              status: 'kept',
+              controlRate,
+              treatmentRate,
+              improvementPct: result.improvementPct,
+              confidence: result.confidence,
+              overallScore: report.overallScore.overall,
+              description: `Promoted: ${skill.name} targeting ${skill.targetFailurePattern ?? 'unknown'}`,
+            });
+
+            // ── Git: merge promoted experiment ─────────────────────────
+            if (gitBranch) gitTracker.keepExperiment(gitBranch);
+            gitBranch = null; // consumed
           } else if (promoteResult.reason === 'requires_approval' && promoteResult.approvalId) {
             this.log('info', `🛑 Skill ${skill.name} promoted but requires human approval. Run /evo approve ${promoteResult.approvalId} to deploy.`);
+            experimentLog.record({
+              experimentId: completed.id,
+              skillName: skill.name,
+              status: 'kept',
+              controlRate,
+              treatmentRate,
+              improvementPct: result.improvementPct,
+              confidence: result.confidence,
+              overallScore: report.overallScore.overall,
+              description: `Pending approval: ${skill.name}`,
+            });
           }
         } else {
           skill.status = 'rejected';
           this.log('info', chalk.yellow(`  ⏳ Not yet: ${skill.name} (${result.improvementPct.toFixed(1)}% improvement)`));
+
+          // ── Log: discarded ───────────────────────────────────────────
+          experimentLog.record({
+            experimentId: completed.id,
+            skillName: skill.name,
+            status: 'discarded',
+            controlRate,
+            treatmentRate,
+            improvementPct: result.improvementPct,
+            confidence: result.confidence,
+            overallScore: report.overallScore.overall,
+            description: `Discarded: ${skill.name} (${result.improvementPct.toFixed(1)}% < ${this.config.MIN_IMPROVEMENT_PCT}% threshold)`,
+          });
+
+          // ── Git: discard experiment branch ───────────────────────────
+          if (gitBranch) gitTracker.discardExperiment(gitBranch);
+          gitBranch = null;
         }
       } catch (err) {
         this.log('error', `  ❌ Experiment failed for ${skill.name}: ${err}`);
+
+        // ── Log: crashed ───────────────────────────────────────────────
+        experimentLog.record({
+          experimentId: `crash-${skill.id}-${Date.now()}`,
+          skillName: skill.name,
+          status: 'crashed',
+          controlRate: 0,
+          treatmentRate: 0,
+          improvementPct: 0,
+          confidence: 0,
+          overallScore: report.overallScore.overall,
+          description: `Crashed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+
+        // ── Git: discard crashed experiment branch ─────────────────────
+        if (gitBranch) gitTracker.discardExperiment(gitBranch);
       }
     }
     this.currentCycle.phases.experiment.durationMs = Date.now() - experimentStart;
@@ -551,6 +630,31 @@ export class EvoHub {
     const totalMs = Date.now() - cycleStart;
     this.log('info', chalk.green(`✅ Cycle #${this.cycleNumber} complete in ${(totalMs / 1000).toFixed(1)}s`));
     this.log('info', chalk.gray(`   Built: ${newSkills.length} skills | Experiments: ${experimentsRun} | Deployed: ${this.currentCycle.phases.integrate.improvementsDeployed}`));
+
+    // ── Record progress frontier ────────────────────────────────────────
+    try {
+      const overallScore = this.currentCycle.phases.evaluate.overallScore ?? 0;
+      const frontierPoint = await frontier.record({
+        cycle: this.cycleNumber,
+        score: overallScore,
+        timestamp: new Date().toISOString(),
+        skillsDeployed: this.currentCycle.phases.integrate.improvementsDeployed,
+        experimentsRun,
+      });
+      if (frontierPoint.bestScore > frontierPoint.score) {
+        this.log('info', chalk.gray(`   📈 Frontier: ${overallScore.toFixed(1)} (best: ${frontierPoint.bestScore.toFixed(1)})`));
+      } else if (frontierPoint.bestScore === frontierPoint.score && frontierPoint.score > 0) {
+        this.log('info', chalk.green(`   📈 New frontier best: ${frontierPoint.bestScore.toFixed(1)}`));
+      }
+
+      // Log experiment stats
+      const expStats = experimentLog.stats();
+      if (expStats.total > 0) {
+        this.log('info', chalk.gray(`   📊 Experiments total: ${expStats.total} (kept: ${expStats.kept}, discarded: ${expStats.discarded}, crashed: ${expStats.crashed}, keep rate: ${(expStats.keepRate * 100).toFixed(0)}%)`));
+      }
+    } catch (err) {
+      this.log('warn', `Failed to record frontier: ${err}`);
+    }
 
     // Save checkpoint after cycle completes
     await this.checkpoint();

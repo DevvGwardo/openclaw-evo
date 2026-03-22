@@ -32,6 +32,9 @@ import { fileURLToPath } from 'node:url';
 import { EvoHub } from './hub.js';
 import { improvementLog } from './memory/improvementLog.js';
 import { promoter } from './experiment/promoter.js';
+import { experimentLog } from './experiment/experimentLog.js';
+import { frontier } from './experiment/frontier.js';
+import { gitTracker } from './experiment/gitTracker.js';
 import { failureCorpus } from './memory/failureCorpus.js';
 import { DEFAULT_CONFIG } from './constants.js';
 
@@ -356,6 +359,37 @@ function createRouter(hub: EvoHub) {
         }
         webhooks.delete(id);
         jsonResponse(res, 200, { ok: true, id });
+        return;
+      }
+
+      // GET /api/frontier — progress frontier (running-best score over time)
+      if (method === 'GET' && url === '/api/frontier') {
+        frontier.get()
+          .then((data) => jsonResponse(res, 200, data))
+          .catch((err) => sendError(res, 500, String(err)));
+        return;
+      }
+
+      // GET /api/experiment-log — full experiment log (TSV data as JSON)
+      if (method === 'GET' && url === '/api/experiment-log') {
+        const entries = experimentLog.readAll();
+        const stats = experimentLog.stats();
+        jsonResponse(res, 200, { entries, stats });
+        return;
+      }
+
+      // GET /api/experiment-log/stats — experiment log summary stats
+      if (method === 'GET' && url === '/api/experiment-log/stats') {
+        jsonResponse(res, 200, experimentLog.stats());
+        return;
+      }
+
+      // GET /api/git/branches — active experiment branches
+      if (method === 'GET' && url === '/api/git/branches') {
+        jsonResponse(res, 200, {
+          available: gitTracker.isAvailable(),
+          branches: gitTracker.listExperimentBranches(),
+        });
         return;
       }
 

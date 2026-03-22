@@ -54,6 +54,7 @@ export async function saveWeights(weights: AdaptiveWeights): Promise<void> {
  */
 export function tuneWeights(
   historicalResults: SessionMetrics[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _patterns: FailurePattern[],
 ): AdaptiveWeights {
   const weights: AdaptiveWeights = { ...DEFAULT_WEIGHTS };
