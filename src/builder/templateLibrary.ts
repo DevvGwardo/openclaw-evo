@@ -156,8 +156,7 @@ function stripAds(html: string): string {
     .replace(/<!--[sS]*?-->/g, '')
     .replace(/<noscript[^>]*>[sS]*?</noscript>/gi, '')
     .replace(/<[^>]+>/g, ' ')
-    // eslint-disable-next-line no-useless-escape
-    .replace(/* \s */ /\s+/g, ' ')
+    .replace(/[\t\n\v\f\r ]+/g, ' ')
     .trim();
 }
 
