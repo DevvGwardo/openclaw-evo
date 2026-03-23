@@ -1,0 +1,13 @@
+{
+  "experimentId": "exp-dad0e1d7-b6f7-4b61-bb35-fed9d18658f1-1774274605295",
+  "experimentName": "A/B: cat — Timeout Skill",
+  "skill": {
+    "id": "dad0e1d7-b6f7-4b61-bb35-fed9d18658f1",
+    "name": "cat — Timeout Skill",
+    "description": "Handles timeout errors for the cat tool. Automatically generated from failure pattern analysis.",
+    "confidence": 0.21672268755754653,
+    "targetFailurePattern": "test-cat-timeout",
+    "generatedAt": "2026-03-23T14:03:25.293Z"
+  },
+  "createdAt": "2026-03-23T14:03:25.344Z"
+}
