@@ -1,0 +1,13 @@
+{
+  "experimentId": "exp-23485c19-0c9c-489f-92e4-fc9f667c6afd-1774266571597",
+  "experimentName": "A/B: read — Auth Error Skill",
+  "skill": {
+    "id": "23485c19-0c9c-489f-92e4-fc9f667c6afd",
+    "name": "read — Auth Error Skill",
+    "description": "Handles auth error errors for the read tool. Automatically generated from failure pattern analysis.",
+    "confidence": 0.6499999999999999,
+    "targetFailurePattern": "fp-2i1zbk",
+    "generatedAt": "2026-03-23T11:49:31.594Z"
+  },
+  "createdAt": "2026-03-23T11:49:31.636Z"
+}
