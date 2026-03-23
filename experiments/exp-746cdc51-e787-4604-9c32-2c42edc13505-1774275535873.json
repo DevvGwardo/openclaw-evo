@@ -1,0 +1,13 @@
+{
+  "experimentId": "exp-746cdc51-e787-4604-9c32-2c42edc13505-1774275535873",
+  "experimentName": "A/B: write — Timeout Skill",
+  "skill": {
+    "id": "746cdc51-e787-4604-9c32-2c42edc13505",
+    "name": "write — Timeout Skill",
+    "description": "Handles timeout errors for the write tool. Automatically generated from failure pattern analysis.",
+    "confidence": 0.21672268755754653,
+    "targetFailurePattern": "test-write-timeout",
+    "generatedAt": "2026-03-23T14:18:55.870Z"
+  },
+  "createdAt": "2026-03-23T14:18:55.928Z"
+}
