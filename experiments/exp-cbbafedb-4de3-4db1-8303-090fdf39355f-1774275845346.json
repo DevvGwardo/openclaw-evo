@@ -1,0 +1,13 @@
+{
+  "experimentId": "exp-cbbafedb-4de3-4db1-8303-090fdf39355f-1774275845346",
+  "experimentName": "A/B: edit — Permission Denied Skill",
+  "skill": {
+    "id": "cbbafedb-4de3-4db1-8303-090fdf39355f",
+    "name": "edit — Permission Denied Skill",
+    "description": "Handles permission denied errors for the edit tool. Automatically generated from failure pattern analysis.",
+    "confidence": 0.21672268755754653,
+    "targetFailurePattern": "test-edit-denied",
+    "generatedAt": "2026-03-23T14:24:05.343Z"
+  },
+  "createdAt": "2026-03-23T14:24:05.402Z"
+}
