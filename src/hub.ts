@@ -102,6 +102,9 @@ export class EvoHub {
     this.running = true;
     this.log('info', chalk.green('🚀 Starting OpenClaw Evo Hub...'));
 
+    // Always resume from checkpoint on start — keeps server state in sync with disk
+    await this.resume();
+
     // Initialize memory
     await this.store.init();
     this.log('info', '✓ Memory store initialized');

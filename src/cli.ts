@@ -361,6 +361,8 @@ async function startRepl(): Promise<void> {
       hub.stop();
       hubReady = false;
       hubInitError = null;
+      // Reload checkpoint so server picks up latest state (skills, experiments, etc.)
+      await hub.resume();
       void initHub();
     }
 
