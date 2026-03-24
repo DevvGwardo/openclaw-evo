@@ -46,6 +46,7 @@ export class EvoHub {
   private monitor: HarnessMonitor;
   private watchdog: GatewayWatchdog;
   private store: MemoryStore;
+  private deployedSkillsStore: MemoryStore;
   private recentMetrics: SessionMetrics[] = [];
   private proposedSkills: GeneratedSkill[] = [];
   private activeExperiments: Map<string, Experiment> = new Map();
@@ -64,6 +65,7 @@ export class EvoHub {
 
     // Initialize memory store
     this.store = new MemoryStore(this.storeMemoryDir());
+    this.deployedSkillsStore = new MemoryStore(this.storeMemoryDir());
 
     // Initialize harness monitor
     this.monitor = new HarnessMonitor({
@@ -238,6 +240,18 @@ export class EvoHub {
     // NOTE: don't touch this.running here - resume() fires from the constructor
     // as fire-and-forget, so it can race with start() which sets running = true.
     this.log('info', `✓ Resumed from checkpoint - cycle #${this.cycleNumber}, ${this.completedCycles.length} cycles completed`);
+
+    // Also load separately-persisted deployed skills so they survive checkpoint gaps
+    const persistedDeployed = await this.deployedSkillsStore.load<GeneratedSkill[]>('deployed-skills');
+    if (persistedDeployed && Array.isArray(persistedDeployed)) {
+      for (const skill of persistedDeployed) {
+        if (!this.proposedSkills.find((s) => s.id === skill.id)) {
+          skill.status = 'deployed';
+          this.proposedSkills.push(skill);
+        }
+      }
+      this.log('info', `✓ Restored ${persistedDeployed.length} deployed skills from persistent store`);
+    }
   }
 
   getCompletedCycles(): EvolutionCycle[] {
@@ -526,6 +540,9 @@ export class EvoHub {
             // Sync status in hub's proposedSkills (promoter works on a separate skill copy)
             const hubSkill = this.proposedSkills.find((s) => s.id === skill.id);
             if (hubSkill) hubSkill.status = 'deployed';
+            // Persist deployed skills separately so they survive checkpoint gaps / expiry
+            const allDeployed = this.proposedSkills.filter((s) => s.status === 'deployed');
+            await this.deployedSkillsStore.save('deployed-skills', allDeployed);
             this.log('info', chalk.greenBright(`  🚀 Promoted: ${skill.name} (+${result.improvementPct.toFixed(1)}%)`));
 
             // ── Log: kept ──────────────────────────────────────────────
