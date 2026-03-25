@@ -51,11 +51,6 @@ export function detectPatterns(
   minFrequency = MIN_FREQUENCY,
 ): FailurePattern[] {
   // Debug: print session composition
-  const debugTypes = [...new Set(sessions.map(s => s.taskType))];
-  const debugFails = sessions.filter(s => !s.success).length;
-  const injectedSessions = sessions.filter(s => s.sessionId.startsWith('test-failure-session'));
-  const injectedFails = injectedSessions.reduce((sum, s) => sum + (s.errorCount ?? 0), 0);
-  console.log(`${LOG_PREFIX} DEBUG: ${sessions.length} sessions | types=[${debugTypes}] | failed=${debugFails} | injected=${injectedSessions.length} sessions with ${injectedFails} errors`);
   const failures = collectFailures(sessions);
   console.log(`${LOG_PREFIX} Collected ${failures.length} failed tool calls from ${sessions.length} sessions`);
 

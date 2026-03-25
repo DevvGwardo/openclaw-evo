@@ -469,9 +469,8 @@ async function main(): Promise<void> {
     try {
       if (isTestFailures) {
         console.log(chalk.yellow('\n🧪 Test mode: injecting synthetic tool failures...\n'));
-        hub.injectTestFailures();
       }
-      await hub.runOnce({ saveCheckpoint: isCronMode });
+      await hub.runOnce({ saveCheckpoint: isCronMode, injectFailures: isTestFailures });
       console.log(chalk.green('✅ Evolution cycle complete.'));
       hub.stop();
       process.exit(0);

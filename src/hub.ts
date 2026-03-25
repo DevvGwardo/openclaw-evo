@@ -59,6 +59,7 @@ export class EvoHub {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private oneShot = false;
   private cycleRunning = false;
+  private _testFailuresInjected = false;
 
   constructor(config: Partial<EvoConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -371,12 +372,6 @@ export class EvoHub {
       this.currentCycle.phases.monitor.eventsProcessed = this.recentMetrics.length;
     }
     this.currentCycle.phases.monitor.durationMs = Date.now() - monitorStart;
-
-    // DEBUG: log recentMetrics state before evaluate
-    {
-      const injected = this.recentMetrics.filter(s => s.sessionId.startsWith('test-failure-session'));
-      this.log('info', chalk.gray(`  🔍 DEBUG recentMetrics: ${this.recentMetrics.length} total, ${injected.length} injected, last 5 types: ${this.recentMetrics.slice(-5).map(s => s.taskType).join(',')}`));
-    }
 
     // ── Phase 2: Evaluate ───────────────────────────────────────────────────
     const evaluateStart = Date.now();
@@ -829,15 +824,26 @@ export class EvoHub {
 
   // ── CLI trigger ────────────────────────────────────────────────────────────
 
-  async runOnce(opts: { saveCheckpoint?: boolean } = {}): Promise<void> {
+  async runOnce(opts: { saveCheckpoint?: boolean; injectFailures?: boolean } = {}): Promise<void> {
     // saveCheckpoint=true for cron jobs (one-shot but checkpoint between runs)
     // saveCheckpoint=false for interactive --once (avoids stomping daemon state)
+    // injectFailures=true to inject synthetic Bash/Grep failures (called AFTER resume
+    //   so injected sessions are at the tail of recentMetrics, not the head)
     this.oneShot = !opts.saveCheckpoint;
 
     // Wait for any in-progress resume() from constructor to finish
     // so we don't race on this.running = false
     await this.resume();
     await this.store.init();
+
+    // Inject test failures AFTER resume completes — this ensures injected sessions
+    // append to the tail of recentMetrics (after checkpoint sessions), so they
+    // are always included in recentMetrics.slice(-100) passed to detectPatterns.
+    if (opts.injectFailures && !this._testFailuresInjected) {
+      this.injectTestFailures();
+      this._testFailuresInjected = true;
+    }
+
     this.running = true;
 
     // Fetch live sessions from the gateway directly (monitor may not be started)
