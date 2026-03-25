@@ -1,0 +1,13 @@
+{
+  "experimentId": "exp-1f48e5f6-aa51-44c7-a994-cd54852b65f4-1774444354649",
+  "experimentName": "A/B: Bash — Unknown Skill",
+  "skill": {
+    "id": "1f48e5f6-aa51-44c7-a994-cd54852b65f4",
+    "name": "Bash — Unknown Skill",
+    "description": "Handles unknown errors for the Bash tool. Automatically generated from failure pattern analysis.",
+    "confidence": 0.46672268755754653,
+    "targetFailurePattern": "fp-g5hku5",
+    "generatedAt": "2026-03-25T13:12:32.962Z"
+  },
+  "createdAt": "2026-03-25T13:12:34.691Z"
+}
