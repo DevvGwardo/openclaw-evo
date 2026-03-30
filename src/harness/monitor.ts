@@ -1,5 +1,5 @@
 /**
- * Hermes Hermes Hermes Hermes Hermes Hermes Hermes Hermes Hermes Hermes Harness Monitor
+ * Hermes Hermes Hermes Hermes Hermes Hermes Hermes Hermes Hermes Hermes Hermes Harness Monitor
  * Wraps Hermes event hooks with self-monitoring.
  * Emits structured HarnessEvent objects for the hub to process.
  */
