@@ -3,7 +3,7 @@
 # Doesn't run the full evolution cycle; just tidies up the repo.
 
 set -euo pipefail
-cd ~/hermes-evo
+cd "$(dirname "$0")"
 
 echo "[polish] Starting at $(date)"
 
