@@ -10,8 +10,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_CONFIG } from './constants.js';
 import { HarnessMonitor } from './harness/monitor.js';
-import { Gateway } from './openclaw/gateway.js';
-import { SessionManager } from './openclaw/sessionManager.js';
+import { Gateway } from './hermes/gateway.js';
+import { SessionManager } from './hermes/sessionManager.js';
 import { extractToolCallsFromHistory, inferTaskType } from './utils.js';
 import { scoreSessions } from './evaluator/scorer.js';
 import { detectPatterns } from './evaluator/patternDetector.js';
@@ -70,13 +70,13 @@ export class EvoHub {
 
     // Initialize harness monitor
     this.monitor = new HarnessMonitor({
-      gatewayUrl: this.config.OPENCLAW_GATEWAY_URL,
-      pollIntervalMs: this.config.OPENCLAW_POLL_INTERVAL_MS,
+      gatewayUrl: this.config.HERMES_GATEWAY_URL,
+      pollIntervalMs: this.config.HERMES_POLL_INTERVAL_MS,
     });
 
     // Initialize gateway watchdog
     this.watchdog = new GatewayWatchdog({
-      gatewayUrl: this.config.OPENCLAW_GATEWAY_URL,
+      gatewayUrl: this.config.HERMES_GATEWAY_URL,
     });
 
     this.log('info', `OpenClaw Evo Hub initialized`);
@@ -311,7 +311,7 @@ export class EvoHub {
     // Fetch live sessions from the gateway (the passive monitor doesn't poll)
     const monitorStart = Date.now();
     try {
-      const gateway = new Gateway(this.config.OPENCLAW_GATEWAY_URL);
+      const gateway = new Gateway(this.config.HERMES_GATEWAY_URL);
       const sessionManager = new SessionManager(gateway);
       const sessions = await sessionManager.getActiveSessions();
       const now = Date.now();
@@ -848,7 +848,7 @@ export class EvoHub {
 
     // Fetch live sessions from the gateway directly (monitor may not be started)
     try {
-      const gateway = new Gateway(this.config.OPENCLAW_GATEWAY_URL);
+      const gateway = new Gateway(this.config.HERMES_GATEWAY_URL);
       const sessionManager = new SessionManager(gateway);
       const sessions = await sessionManager.getActiveSessions();
       const now = Date.now();

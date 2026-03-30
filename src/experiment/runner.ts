@@ -17,11 +17,11 @@
  */
 
 import type { Experiment, ExperimentResult, ExperimentTask, GeneratedSkill, SessionMetrics } from '../types.js';
-import { Gateway } from '../openclaw/gateway.js';
-import { SessionManager } from '../openclaw/sessionManager.js';
+import { Gateway } from '../hermes/gateway.js';
+import { SessionManager } from '../hermes/sessionManager.js';
 import { extractToolCallsFromHistory, inferTaskType } from '../utils.js';
 
-const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL ?? 'http://localhost:18789';
+const GATEWAY_URL = process.env.HERMES_GATEWAY_URL ?? 'http://localhost:18789';
 const EXPERIMENT_SESSIONS = parseInt(process.env.EXPERIMENT_SESSIONS ?? '10', 10);
 
 

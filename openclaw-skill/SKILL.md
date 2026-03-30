@@ -1,4 +1,4 @@
-# OpenClaw Evo Skill
+# Hermes Evo Skill
 
 Monitor and control the OpenClaw self-evolution system directly from chat.
 

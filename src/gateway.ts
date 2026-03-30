@@ -6,7 +6,7 @@
  * Extracted from hub.ts to keep gateway interaction separate from orchestration.
  */
 
-import { Gateway, type OpenClawSession } from './openclaw/gateway.js';
+import { Gateway, type OpenClawSession } from './hermes/gateway.js';
 import type { SessionMetrics, ToolCall } from './types.js';
 import { extractToolCallsFromHistory, inferTaskType } from './utils.js';
 

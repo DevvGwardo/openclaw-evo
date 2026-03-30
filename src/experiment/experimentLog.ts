@@ -4,7 +4,7 @@
  * Append-only TSV log of every experiment outcome — kept, discarded, and crashed.
  * Inspired by Karpathy's autoresearch results.tsv pattern.
  *
- * File lives at ~/.openclaw/evo-memory/results.tsv and is human-readable,
+ * File lives at ~/.hermes/evo-memory/results.tsv and is human-readable,
  * grep-friendly, and easy to load into notebooks for analysis.
  *
  * Columns:
@@ -42,7 +42,7 @@ export interface ExperimentLogEntry {
 
 function resolveLogPath(): string {
   const home = process.env.HOME ?? '~';
-  const memoryDir = (process.env.MEMORY_DIR ?? '~/.openclaw/evo-memory/').replace('~', home);
+  const memoryDir = (process.env.MEMORY_DIR ?? '~/.hermes/evo-memory/').replace('~', home);
   return `${memoryDir}results.tsv`;
 }
 

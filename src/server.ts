@@ -41,7 +41,7 @@ import { DEFAULT_CONFIG } from './constants.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Dashboard builds to dashboard/dist/ via vite build
 const DIST_DIR = path.resolve(__dirname, '..', 'dashboard', 'dist');
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET ?? 'openclaw-evo-webhook-secret';
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET ?? 'hermes-evo-webhook-secret';
 const VALID_EVENTS = ['skill_promoted', 'skill_approved', 'experiment_completed', 'cycle_completed'] as const;
 type WebhookEvent = typeof VALID_EVENTS[number];
 

@@ -267,8 +267,8 @@ export interface EvoConfig {
   STATISTICAL_CONFIDENCE: number;  // Confidence threshold (0-1)
 
   // OpenClaw integration
-  OPENCLAW_GATEWAY_URL: string;
-  OPENCLAW_POLL_INTERVAL_MS: number;
+  HERMES_GATEWAY_URL: string;
+  HERMES_POLL_INTERVAL_MS: number;
 
   // Tool builder
   SKILL_OUTPUT_DIR: string;

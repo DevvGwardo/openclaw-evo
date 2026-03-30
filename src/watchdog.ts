@@ -7,13 +7,13 @@
  * Behaviour:
  *   1. Polls gateway health every WATCHDOG_CHECK_INTERVAL_MS (default 15s)
  *   2. After WATCHDOG_FAILURE_THRESHOLD consecutive failures (default 3),
- *      attempts to restart via `openclaw gateway start`
+ *      attempts to restart via `hermes gateway start`
  *   3. Waits WATCHDOG_RESTART_COOLDOWN_MS (default 60s) before retrying
  *   4. Emits events for the hub to log/react to
  */
 
 import { spawn } from 'child_process';
-import { Gateway } from './openclaw/gateway.js';
+import { Gateway } from './hermes/gateway.js';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -46,12 +46,12 @@ const envBool = (key: string, fallback: boolean) => {
 };
 
 export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
-  gatewayUrl:        process.env.OPENCLAW_GATEWAY_URL ?? 'http://localhost:18789',
+  gatewayUrl:        process.env.HERMES_GATEWAY_URL ?? 'http://localhost:18789',
   checkIntervalMs:   envInt('WATCHDOG_CHECK_INTERVAL_MS', 15_000),
   failureThreshold:  envInt('WATCHDOG_FAILURE_THRESHOLD', 3),
   restartCooldownMs: envInt('WATCHDOG_RESTART_COOLDOWN_MS', 60_000),
   maxRestarts:       envInt('WATCHDOG_MAX_RESTARTS', 10),
-  restartCommand:    process.env.WATCHDOG_RESTART_CMD ?? 'openclaw',
+  restartCommand:    process.env.WATCHDOG_RESTART_CMD ?? 'hermes',
   restartArgs:       (process.env.WATCHDOG_RESTART_ARGS ?? 'gateway start').split(' '),
   enabled:           envBool('WATCHDOG_ENABLED', true),
 };

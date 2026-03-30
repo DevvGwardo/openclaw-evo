@@ -65,7 +65,7 @@ export async function phaseMonitor(ctx: CycleContext): Promise<void> {
   const seenIds = new Set(recentMetrics.map((m) => m.sessionId));
 
   try {
-    const fresh = await fetchAllSessionMetrics(config.OPENCLAW_GATEWAY_URL, seenIds);
+    const fresh = await fetchAllSessionMetrics(config.HERMES_GATEWAY_URL, seenIds);
 
     for (const m of fresh) {
       logger('info', chalk.gray(

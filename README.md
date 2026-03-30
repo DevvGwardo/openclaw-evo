@@ -1,12 +1,12 @@
-# OpenClaw Evo — Self-Evolving AI Assistant
+# Hermes Evo — Self-Evolving AI Assistant
 
-[![CI](https://github.com/DevvGwardo/openclaw-evo/actions/workflows/ci.yml/badge.svg)](https://github.com/DevvGwardo/openclaw-evo/actions/workflows/ci.yml)
+[![CI](https://github.com/DevvGwardo/hermes-evo/actions/workflows/ci.yml/badge.svg)](https://github.com/DevvGwardo/hermes-evo/actions/workflows/ci.yml)
 [![Node.js 20+](https://img.shields.io/badge/node-20%2B-green)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/typescript-5.0-blue)](https://www.typescriptlang.org)
 
-> OpenClaw that monitors, evaluates, and improves itself — recursively.
+> OpenClaw that monitors, evaluates, and improves Hermes — recursively.
 
-**OpenClaw Evo** is a self-evolution engine for [OpenClaw](https://github.com/DevvGwardo/openclaw). It watches how your AI assistant performs, identifies recurring failures, automatically generates fixes (skills), A/B tests them with statistical rigor, and deploys the winners — continuously, without human intervention.
+**Hermes Evo** is a self-evolution engine for Hermes(https://github.com/DevvGwardo/openclaw). It watches how your AI assistant performs, identifies recurring failures, automatically generates fixes (skills), A/B tests them with statistical rigor, and deploys the winners — continuously, without human intervention.
 
 It also acts as a **supervisor** — if the OpenClaw gateway goes down, the built-in watchdog detects it and restarts it automatically.
 
@@ -14,7 +14,7 @@ It also acts as a **supervisor** — if the OpenClaw gateway goes down, the buil
 
 ```bash
 # Clone & install
-git clone https://github.com/DevvGwardo/openclaw-evo.git && cd openclaw-evo && npm install
+git clone https://github.com/DevvGwardo/hermes-evo.git && cd hermes-evo && npm install
 
 # Build
 npm run build
@@ -34,7 +34,7 @@ npm run test
 
 ## How It Works
 
-OpenClaw Evo runs a five-phase evolution cycle every 5 minutes:
+Hermes Evo runs a five-phase evolution cycle every 5 minutes:
 
 ```mermaid
 flowchart LR
@@ -66,7 +66,7 @@ flowchart LR
         Disk["~/.openclaw/evo-memory/"]
     end
 
-    subgraph Evo["OpenClaw Evo"]
+    subgraph Evo["Hermes Evo"]
         direction TB
 
         CLI["CLI / REPL"]
@@ -253,7 +253,7 @@ The hub starts an interactive REPL:
 ```
 $ npm run start:hub
 
-OpenClaw Evo > help
+Hermes Evo > help
 
   status         Show hub status
   trigger        Trigger an evolution cycle now
@@ -287,7 +287,7 @@ All defaults live in `src/constants.ts` and can be overridden via environment va
 ## Repository Structure
 
 ```
-openclaw-evo/
+hermes-evo/
 ├── src/
 │   ├── hub.ts                  # EvoHub — main orchestrator
 │   ├── cli.ts                  # Interactive REPL entry point

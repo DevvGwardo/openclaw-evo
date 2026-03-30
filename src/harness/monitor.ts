@@ -1,6 +1,6 @@
 /**
- * Harness Monitor
- * Wraps OpenClaw event hooks with self-monitoring.
+ * Hermes Harness Monitor
+ * Wraps Hermes event hooks with self-monitoring.
  * Emits structured HarnessEvent objects for the hub to process.
  */
 
@@ -136,7 +136,7 @@ export class HarnessMonitor {
 
     this.config = {
       gatewayUrl: config.gatewayUrl ?? 'http://localhost:18789',
-      gatewayToken: config.gatewayToken ?? process.env.OPENCLAW_GATEWAY_TOKEN ?? '',
+      gatewayToken: config.gatewayToken ?? process.env.HERMES_GATEWAY_TOKEN ?? '',
       pollIntervalMs: config.pollIntervalMs ?? saved.pollIntervalMs,
       idleThresholdMs: saved.idleThresholdMs,
       onEvent: config.onEvent,
@@ -390,7 +390,7 @@ export class HarnessMonitor {
       const fs = await import('fs/promises');
       const path = await import('path');
       const homedir = process.env.HOME ?? '';
-      const authPath = path.join(homedir, '.openclaw', 'identity', 'device-auth.json');
+      const authPath = path.join(homedir, '.hermes', 'hermes-agent', 'identity', 'device-auth.json');
       const authData = JSON.parse(await fs.readFile(authPath, 'utf-8'));
       const operatorToken = authData?.tokens?.operator?.token;
       if (operatorToken && nonce) {

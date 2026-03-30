@@ -2,7 +2,7 @@
  * OpenClaw Evo — Experiment Promoter
  *
  * Evaluates completed experiments and promotes winning treatment skills
- * to ~/.openclaw/skills/ so OpenClaw can pick them up on next startup.
+ * to ~/.hermes/skills/ so OpenClaw can pick them up on next startup.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
@@ -10,11 +10,11 @@ import { join, dirname } from 'node:path';
 
 import type { Experiment, GeneratedSkill, PromotionDecision, SkillApproval } from '../types.js';
 import { comparator } from './comparator.js';
-import { SkillManager } from '../openclaw/skillManager.js';
+import { SkillManager } from '../hermes/skillManager.js';
 import { improvementLog } from '../memory/improvementLog.js';
 import { DEFAULT_CONFIG } from '../constants.js';
 
-const SKILLS_DIR = process.env.SKILL_OUTPUT_DIR ?? join(process.env.HOME ?? '~', '.openclaw', 'skills');
+const SKILLS_DIR = process.env.SKILL_OUTPUT_DIR ?? join(process.env.HOME ?? '~', '.hermes', 'skills');
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -186,7 +186,7 @@ export const promoter = {
 
   /**
    * Promote the treatment skill of a given experiment: write it to
-   * ~/.openclaw/skills/<skillId>/ so OpenClaw picks it up on next startup.
+   * ~/.hermes/skills/<skillId>/ so Hermes picks it up on next startup.
    *
    * Instead of deploying immediately, this creates a pending approval request
    * and returns `{ promoted: false, reason: 'requires_approval', approvalId }`.
@@ -275,7 +275,7 @@ export const promoter = {
     // Load the treatment skill
     const skill = await loadTreatmentSkill(experiment.treatmentSkillId);
 
-    // 1. Install skill to ~/.openclaw/skills/<skill-id>/ with SKILL.md + manifest
+    // 1. Install skill to ~/.hermes/skills/<skill-id>/ with SKILL.md + manifest
     const installedPath = await skillManager.installSkill(skill, experiment.id);
 
     // 2. Update skill status to 'deployed'
@@ -287,7 +287,7 @@ export const promoter = {
     experimentStore.set(experiment.id, experiment);
 
     // 3. Log the deployment path
-    log.info(`Deployed to ~/.openclaw/skills/${skill.id}/`, {
+    log.info(`Deployed to ~/.hermes/skills/${skill.id}/`, {
       experimentId: experiment.id,
       skillId: skill.id,
       skillName: skill.name,
@@ -330,7 +330,7 @@ export const promoter = {
     });
 
     // System notification
-    console.log(`[SYSTEM_NOTIFY] 🎉 Skill approved and deployed: ${skill.name} → ~/.openclaw/skills/${skill.id}/`);
+    console.log(`[SYSTEM_NOTIFY] 🎉 Skill approved and deployed: ${skill.name} → ~/.hermes/skills/${skill.id}/`);
   },
 
   /**
@@ -373,7 +373,7 @@ function resolveExperiment(experimentOrId: Experiment | string): Experiment | un
  *
  * Strategy:
  *  1. Try the in-memory experiment store (treatment skill may have been stored there)
- *  2. Try reading from ~/.openclaw/skills/*.json
+ *  2. Try reading from ~/.hermes/skills/*.json
  *  3. Try fetching from the OpenClaw gateway API
  */
 async function loadTreatmentSkill(skillId: string): Promise<GeneratedSkill> {
@@ -402,7 +402,7 @@ async function loadTreatmentSkill(skillId: string): Promise<GeneratedSkill> {
 
   // 2. Try the gateway API
   try {
-    const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL ?? 'http://localhost:18789';
+    const GATEWAY_URL = process.env.HERMES_GATEWAY_URL ?? 'http://localhost:18789';
     const res = await fetch(`${GATEWAY_URL}/api/skills/${skillId}`, {
       signal: AbortSignal.timeout(5000),
     });
@@ -434,7 +434,7 @@ async function loadTreatmentSkill(skillId: string): Promise<GeneratedSkill> {
 }
 
 /**
- * Install a skill to ~/.openclaw/skills/ and update experiment status.
+ * Install a skill to ~/.hermes/skills/ and update experiment status.
  * Used by both auto-approve and manual approve paths.
  */
 async function deploySkill(skill: GeneratedSkill): Promise<void> {
@@ -459,7 +459,7 @@ async function deploySkill(skill: GeneratedSkill): Promise<void> {
     approvedBy: 'auto-promoter',
   });
 
-  console.log(`[SYSTEM_NOTIFY] 🎉 Skill auto-deployed: ${skill.name} → ~/.openclaw/skills/${skill.id}/`);
+  console.log(`[SYSTEM_NOTIFY] 🎉 Skill auto-deployed: ${skill.name} → ~/.hermes/skills/${skill.id}/`);
   log.info(`Auto-deployed skill "${skill.name}" → ${installedPath}`);
 }
 

@@ -3,7 +3,7 @@
 # Doesn't run the full evolution cycle; just tidies up the repo.
 
 set -euo pipefail
-cd ~/openclaw-evo
+cd ~/hermes-evo
 
 echo "[polish] Starting at $(date)"
 

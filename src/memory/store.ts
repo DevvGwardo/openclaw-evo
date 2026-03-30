@@ -9,7 +9,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-const DEFAULT_MEMORY_DIR = '~/.openclaw/evo-memory';
+const DEFAULT_MEMORY_DIR = '~/.hermes/evo-memory';
 
 export class MemoryStore {
   private dir: string;
