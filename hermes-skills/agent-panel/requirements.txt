@@ -1,4 +1,0 @@
-dspy
-anthropic
-openai
-requests
